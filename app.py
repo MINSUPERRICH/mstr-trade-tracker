@@ -82,13 +82,12 @@ tab_math, tab_ai = st.tabs(["🔮 Profit Simulator (Math)", "📸 Chart Analyst 
 with tab_math:
     st.subheader(f"📊 {symbol} Price Simulator")
     
-    # 🆕 FORCE RECALCULATION BUTTON
+    # FORCE RECALCULATION BUTTON
     if st.button("🔄 Force Recalculate (Update Dates)"):
         st.rerun()
 
     col_sim1, col_sim2 = st.columns(2)
     with col_sim1:
-        # Ensure simulation date is never before purchase date
         default_sim_date = max(purchase_date, date.today())
         sim_date = st.slider("📅 Future Date", min_value=purchase_date, max_value=expiration_date, value=default_sim_date, format="MMM DD")
     with col_sim2:
@@ -127,7 +126,7 @@ with tab_math:
             
     df_heatmap = pd.DataFrame(heatmap_data)
 
-    # 🆕 DOWNLOAD BUTTON FOR SIMULATOR DATA
+    # DOWNLOAD BUTTON FOR SIMULATOR DATA
     csv = df_heatmap.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Download Simulator Data (CSV)",
@@ -154,11 +153,28 @@ with tab_math:
                 try:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
+                    
+                    # 🆕 UPDATED CONTEXT: NOW INCLUDES STRIKE AND EXPIRATION
                     context = f"""
-                    You are a trading expert. User is simulating {symbol} Call Option.
-                    Inputs: Buy Price ${entry_price}, Sim Date {sim_date}, Sim Stock ${sim_price}, Profit ${net_profit}.
+                    You are a financial trading expert. The user is simulating a {symbol} Call Option.
+                    
+                    CRITICAL TRADE DETAILS:
+                    - Strike Price: ${strike_price}
+                    - Expiration Date: {expiration_date}
+                    - Purchase Price: ${entry_price}
+                    - Implied Volatility: {implied_volatility * 100}%
+                    
+                    SIMULATION SCENARIO:
+                    - Simulated Date: {sim_date}
+                    - Simulated Stock Price: ${sim_price}
+                    - Simulated Option Price: ${projected_option_price}
+                    - Simulated Net Profit: ${net_profit}
+                    
                     User Question: {math_question}
+                    
+                    Please explain the math or strategy based on these exact numbers.
                     """
+                    
                     response = model.generate_content(context)
                     st.info(response.text)
                 except Exception as e:
@@ -212,7 +228,7 @@ with tab_ai:
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-        # 🆕 DOWNLOAD BUTTON FOR AI ANALYSIS
+        # DOWNLOAD BUTTON FOR AI ANALYSIS
         if st.session_state["ai_analysis_text"]:
             st.download_button(
                 label="📥 Download AI Report (.txt)",
