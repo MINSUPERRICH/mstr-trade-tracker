@@ -2,6 +2,6 @@ streamlit
 pandas
 numpy
 altair
-google-generativeai>=0.8.3
-
 Pillow
+google-generativeai>=0.8.3
+scipy
