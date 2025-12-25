@@ -123,7 +123,7 @@ with tab1:
                 with st.spinner("Gemini is studying the chart..."):
                     try:
                         genai.configure(api_key=api_key)
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        model = genai.GenerativeModel('gemini-2.0-flash')
                         
                         prompt = """
                         You are an expert options trader. Analyze this chart image. 
@@ -173,4 +173,5 @@ c = alt.Chart(chart_data).mark_line(color='#FF4B4B', point=True).encode(
     x='Days From Now', y=alt.Y('Option Value (If Stock Flat)', scale=alt.Scale(domain=[0, 10])),
     tooltip=['Days From Now', 'Option Value (If Stock Flat)']
 ).interactive()
+
 st.altair_chart(c, use_container_width=True)
