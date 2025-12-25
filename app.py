@@ -5,6 +5,7 @@ import altair as alt
 from datetime import date, timedelta
 from scipy.stats import norm
 from PIL import Image
+import io
 import google.generativeai as genai
 
 # --- PAGE CONFIGURATION ---
@@ -76,14 +77,20 @@ risk_free_rate = 0.045
 tab_math, tab_ai = st.tabs(["🔮 Profit Simulator (Math)", "📸 Chart Analyst (AI)"])
 
 # =========================================================
-#  TAB 1: MATH SIMULATOR + Q&A
+#  TAB 1: MATH SIMULATOR + DOWNLOADS
 # =========================================================
 with tab_math:
     st.subheader(f"📊 {symbol} Price Simulator")
     
+    # 🆕 FORCE RECALCULATION BUTTON
+    if st.button("🔄 Force Recalculate (Update Dates)"):
+        st.rerun()
+
     col_sim1, col_sim2 = st.columns(2)
     with col_sim1:
-        sim_date = st.slider("📅 Future Date", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=5), format="MMM DD")
+        # Ensure simulation date is never before purchase date
+        default_sim_date = max(purchase_date, date.today())
+        sim_date = st.slider("📅 Future Date", min_value=purchase_date, max_value=expiration_date, value=default_sim_date, format="MMM DD")
     with col_sim2:
         sim_price = st.slider("💲 Future Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0)
 
@@ -100,26 +107,44 @@ with tab_math:
     m3.metric("Option Price", f"${projected_option_price:.2f}")
     m4.metric("Net Profit", f"${net_profit:,.2f}", delta_color="normal" if net_profit >= 0 else "inverse")
 
-    # Heatmap
+    # Heatmap Calculation
     st.markdown("---")
     prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
     future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
     heatmap_data = []
+    
     for d in future_dates:
         t_years = max((expiration_date - d).days / 365.0, 0.0001)
         for p in prices:
             opt = black_scholes(p, strike_price, t_years, risk_free_rate, implied_volatility)
             pl = (opt - entry_price) * 100 * contracts
-            heatmap_data.append({"Date": d.strftime('%Y-%m-%d'), "Stock Price": round(p, 2), "Profit": round(pl, 2)})
+            heatmap_data.append({
+                "Date": d.strftime('%Y-%m-%d'), 
+                "Stock Price": round(p, 2), 
+                "Option Price": round(opt, 2),
+                "Profit": round(pl, 2)
+            })
             
-    c = alt.Chart(pd.DataFrame(heatmap_data)).mark_rect().encode(
+    df_heatmap = pd.DataFrame(heatmap_data)
+
+    # 🆕 DOWNLOAD BUTTON FOR SIMULATOR DATA
+    csv = df_heatmap.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Simulator Data (CSV)",
+        data=csv,
+        file_name=f"{symbol}_simulation_{date.today()}.csv",
+        mime="text/csv",
+    )
+
+    # Chart Display
+    c = alt.Chart(df_heatmap).mark_rect().encode(
         x='Date:O', y='Stock Price:O', color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), tooltip=['Date', 'Stock Price', 'Profit']
     ).properties(height=350)
     st.altair_chart(c, use_container_width=True)
 
     # --- Q&A FOR MATH TAB ---
     st.markdown("### 💬 Ask about this Scenario")
-    math_question = st.text_input("Ask a question about these numbers (e.g., 'Why am I losing money?')", key="math_q")
+    math_question = st.text_input("Ask a question about these numbers...", key="math_q")
     
     if st.button("Ask Gemini (Simulator)"):
         if not api_key:
@@ -129,16 +154,9 @@ with tab_math:
                 try:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
-                    
                     context = f"""
-                    You are a financial trading expert. The user is simulating a {symbol} Call Option.
-                    Current Inputs:
-                    - Buy Price: ${entry_price}
-                    - Simulation Date: {sim_date}
-                    - Simulated Stock Price: ${sim_price}
-                    - Resulting Profit/Loss: ${net_profit}
-                    - Days Passed: {(sim_date - purchase_date).days}
-                    
+                    You are a trading expert. User is simulating {symbol} Call Option.
+                    Inputs: Buy Price ${entry_price}, Sim Date {sim_date}, Sim Stock ${sim_price}, Profit ${net_profit}.
                     User Question: {math_question}
                     """
                     response = model.generate_content(context)
@@ -147,63 +165,65 @@ with tab_math:
                     st.error(f"Error: {e}")
 
 # =========================================================
-#  TAB 2: AI ANALYST (MULTI-FILE SUPPORT)
+#  TAB 2: AI ANALYST + DOWNLOADS
 # =========================================================
 with tab_ai:
     st.subheader("🤖 AI Chart Analysis")
-    st.markdown("Upload **one or multiple** charts. Example: Upload an **Option Chain** and a **Stock Chart** to compare them.")
-    
-    # 🆕 CHANGED: accept_multiple_files=True
     uploaded_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
     
+    # Initialize session state for AI response if not exists
+    if "ai_analysis_text" not in st.session_state:
+        st.session_state["ai_analysis_text"] = ""
+
     if uploaded_files:
-        # Load all images
         images = [Image.open(f) for f in uploaded_files]
+        st.session_state["last_images"] = images
         
-        # Display images side-by-side (max 3 per row to look good)
         cols = st.columns(len(images))
         for i, img in enumerate(images):
             with cols[i]:
                 st.image(img, caption=f"Chart {i+1}", use_container_width=True)
-        
-        # Store in session state for follow-up questions
-        st.session_state["last_images"] = images
 
-        # Initial Analysis Button
         if st.button("✨ Analyze All Files"):
             if not api_key:
                 st.error("Missing API Key")
             else:
-                with st.spinner("Gemini is comparing your files..."):
+                with st.spinner("Gemini is analyzing..."):
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
                         
                         prompt = f"""
                         You are an expert options trader specializing in {symbol}.
-                        I have provided {len(images)} images. They may be Technical Charts, Option Chains (Strike/Expiration), or Heatmaps.
-
-                        Please perform a **Comparative Analysis**:
-                        1. **Synthesize:** Look at all images together. Do they tell the same story, or do they contradict?
-                        2. **Sentiment:** Is the data across these files Bullish or Bearish?
-                        3. **Strategy:** I am holding a Long Call (Strike ${strike_price}, Exp {expiration_date}). 
-                        
-                        Based on ALL provided evidence, give a recommendation.
+                        Analyze these {len(images)} images (Technical Charts/Option Chains).
+                        1. Compare the data.
+                        2. Is the sentiment Bullish or Bearish?
+                        3. I hold a Long Call (Strike ${strike_price}, Exp {expiration_date}). Recommendation?
                         """
                         
-                        # Send text + all images to Gemini
                         content = [prompt] + images
                         response = model.generate_content(content)
                         
+                        # Store response in session state so we can download it
+                        st.session_state["ai_analysis_text"] = response.text
                         st.markdown("### 🧠 Gemini's Verdict:")
                         st.write(response.text)
+                        
                     except Exception as e:
                         st.error(f"Error: {e}")
 
+        # 🆕 DOWNLOAD BUTTON FOR AI ANALYSIS
+        if st.session_state["ai_analysis_text"]:
+            st.download_button(
+                label="📥 Download AI Report (.txt)",
+                data=st.session_state["ai_analysis_text"],
+                file_name=f"{symbol}_AI_Analysis_{date.today()}.txt",
+                mime="text/plain"
+            )
+
         # --- Q&A FOR AI TAB ---
         st.markdown("---")
-        st.markdown("### 💬 Ask about these Charts")
-        chart_question = st.text_input("Ask a follow-up question (e.g., 'What about the volume in the second image?')", key="chart_q")
+        chart_question = st.text_input("Ask a follow-up question...", key="chart_q")
         
         if st.button("Ask Gemini (Chart)"):
             if "last_images" not in st.session_state:
@@ -211,11 +231,10 @@ with tab_ai:
             elif not api_key:
                 st.error("Missing API Key")
             else:
-                with st.spinner("Reviewing evidence..."):
+                with st.spinner("Reviewing..."):
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
-                        # We send the question + ALL stored images
                         content = [chart_question] + st.session_state["last_images"]
                         response = model.generate_content(content)
                         st.info(response.text)
