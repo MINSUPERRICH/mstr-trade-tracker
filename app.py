@@ -130,7 +130,6 @@ with tab_math:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
                     
-                    # Context for AI
                     context = f"""
                     You are a financial trading expert. The user is simulating a {symbol} Call Option.
                     Current Inputs:
@@ -141,8 +140,6 @@ with tab_math:
                     - Days Passed: {(sim_date - purchase_date).days}
                     
                     User Question: {math_question}
-                    
-                    Explain clearly why the result is what it is (mention Theta/Time Decay or Delta if relevant).
                     """
                     response = model.generate_content(context)
                     st.info(response.text)
@@ -150,30 +147,54 @@ with tab_math:
                     st.error(f"Error: {e}")
 
 # =========================================================
-#  TAB 2: AI ANALYST + Q&A
+#  TAB 2: AI ANALYST (MULTI-FILE SUPPORT)
 # =========================================================
 with tab_ai:
     st.subheader("🤖 AI Chart Analysis")
-    uploaded_file = st.file_uploader("Upload Chart Screenshot...", type=['jpg', 'png', 'jpeg'])
+    st.markdown("Upload **one or multiple** charts. Example: Upload an **Option Chain** and a **Stock Chart** to compare them.")
     
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption='Uploaded Chart', use_container_width=True)
+    # 🆕 CHANGED: accept_multiple_files=True
+    uploaded_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
+    
+    if uploaded_files:
+        # Load all images
+        images = [Image.open(f) for f in uploaded_files]
         
-        # We store the image in session state so we can chat about it multiple times
-        st.session_state["last_image"] = image
+        # Display images side-by-side (max 3 per row to look good)
+        cols = st.columns(len(images))
+        for i, img in enumerate(images):
+            with cols[i]:
+                st.image(img, caption=f"Chart {i+1}", use_container_width=True)
+        
+        # Store in session state for follow-up questions
+        st.session_state["last_images"] = images
 
         # Initial Analysis Button
-        if st.button("✨ Analyze Chart"):
+        if st.button("✨ Analyze All Files"):
             if not api_key:
                 st.error("Missing API Key")
             else:
-                with st.spinner("Analyzing..."):
+                with st.spinner("Gemini is comparing your files..."):
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
-                        prompt = f"Analyze this {symbol} chart. Is it Bullish or Bearish for a Long Call? Explain key support/resistance."
-                        response = model.generate_content([prompt, image])
+                        
+                        prompt = f"""
+                        You are an expert options trader specializing in {symbol}.
+                        I have provided {len(images)} images. They may be Technical Charts, Option Chains (Strike/Expiration), or Heatmaps.
+
+                        Please perform a **Comparative Analysis**:
+                        1. **Synthesize:** Look at all images together. Do they tell the same story, or do they contradict?
+                        2. **Sentiment:** Is the data across these files Bullish or Bearish?
+                        3. **Strategy:** I am holding a Long Call (Strike ${strike_price}, Exp {expiration_date}). 
+                        
+                        Based on ALL provided evidence, give a recommendation.
+                        """
+                        
+                        # Send text + all images to Gemini
+                        content = [prompt] + images
+                        response = model.generate_content(content)
+                        
                         st.markdown("### 🧠 Gemini's Verdict:")
                         st.write(response.text)
                     except Exception as e:
@@ -181,21 +202,22 @@ with tab_ai:
 
         # --- Q&A FOR AI TAB ---
         st.markdown("---")
-        st.markdown("### 💬 Ask about the Chart")
-        chart_question = st.text_input("Ask a follow-up question (e.g., 'What if volume drops?')", key="chart_q")
+        st.markdown("### 💬 Ask about these Charts")
+        chart_question = st.text_input("Ask a follow-up question (e.g., 'What about the volume in the second image?')", key="chart_q")
         
         if st.button("Ask Gemini (Chart)"):
-            if "last_image" not in st.session_state:
-                st.warning("Please upload a chart first.")
+            if "last_images" not in st.session_state:
+                st.warning("Please upload charts first.")
             elif not api_key:
                 st.error("Missing API Key")
             else:
-                with st.spinner("Looking at chart again..."):
+                with st.spinner("Reviewing evidence..."):
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
-                        # We send the image AGAIN with the specific question
-                        response = model.generate_content([chart_question, st.session_state["last_image"]])
+                        # We send the question + ALL stored images
+                        content = [chart_question] + st.session_state["last_images"]
+                        response = model.generate_content(content)
                         st.info(response.text)
                     except Exception as e:
                         st.error(f"Error: {e}")
