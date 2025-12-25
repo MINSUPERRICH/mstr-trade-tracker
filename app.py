@@ -4,6 +4,7 @@ import numpy as np
 import altair as alt
 from PIL import Image
 import google.generativeai as genai
+import time
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -90,6 +91,10 @@ profit_loss = current_value_total - total_cost
 roi = (profit_loss / total_cost) * 100
 
 # --- MAIN DASHBOARD ---
+# 🆕 REFRESH BUTTON ADDED HERE
+if st.button("Refresh Price 🔄"):
+    st.rerun()
+
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Est. Option Price", f"${estimated_option_price:.2f}", delta=f"{estimated_option_price - ENTRY_PRICE:.2f}")
@@ -123,6 +128,8 @@ with tab1:
                 with st.spinner("Gemini is studying the chart..."):
                     try:
                         genai.configure(api_key=api_key)
+                        
+                        # 🆕 UPDATED MODEL VERSION HERE (v1.5 -> v2.0)
                         model = genai.GenerativeModel('gemini-2.0-flash')
                         
                         prompt = """
@@ -173,5 +180,4 @@ c = alt.Chart(chart_data).mark_line(color='#FF4B4B', point=True).encode(
     x='Days From Now', y=alt.Y('Option Value (If Stock Flat)', scale=alt.Scale(domain=[0, 10])),
     tooltip=['Days From Now', 'Option Value (If Stock Flat)']
 ).interactive()
-
 st.altair_chart(c, use_container_width=True)
