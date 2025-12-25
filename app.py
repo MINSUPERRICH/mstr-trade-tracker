@@ -126,7 +126,7 @@ with tab_math:
             
     df_heatmap = pd.DataFrame(heatmap_data)
 
-    # DOWNLOAD BUTTON FOR SIMULATOR DATA
+    # DOWNLOAD BUTTON FOR SIMULATOR CSV
     csv = df_heatmap.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Download Simulator Data (CSV)",
@@ -143,6 +143,11 @@ with tab_math:
 
     # --- Q&A FOR MATH TAB ---
     st.markdown("### 💬 Ask about this Scenario")
+    
+    # Initialize session state for Q&A Text
+    if "math_ai_response" not in st.session_state:
+        st.session_state["math_ai_response"] = ""
+
     math_question = st.text_input("Ask a question about these numbers...", key="math_q")
     
     if st.button("Ask Gemini (Simulator)"):
@@ -154,7 +159,6 @@ with tab_math:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
                     
-                    # 🆕 UPDATED CONTEXT: NOW INCLUDES STRIKE AND EXPIRATION
                     context = f"""
                     You are a financial trading expert. The user is simulating a {symbol} Call Option.
                     
@@ -176,9 +180,22 @@ with tab_math:
                     """
                     
                     response = model.generate_content(context)
-                    st.info(response.text)
+                    st.session_state["math_ai_response"] = response.text
+                    
                 except Exception as e:
                     st.error(f"Error: {e}")
+
+    # Display Response & Download Button
+    if st.session_state["math_ai_response"]:
+        st.info(st.session_state["math_ai_response"])
+        
+        # 🆕 NEW DOWNLOAD BUTTON FOR Q&A
+        st.download_button(
+            label="📥 Download Gemini Explanation (.txt)",
+            data=st.session_state["math_ai_response"],
+            file_name=f"Gemini_Scenario_Explanation_{date.today()}.txt",
+            mime="text/plain"
+        )
 
 # =========================================================
 #  TAB 2: AI ANALYST + DOWNLOADS
@@ -220,7 +237,7 @@ with tab_ai:
                         content = [prompt] + images
                         response = model.generate_content(content)
                         
-                        # Store response in session state so we can download it
+                        # Store response in session state
                         st.session_state["ai_analysis_text"] = response.text
                         st.markdown("### 🧠 Gemini's Verdict:")
                         st.write(response.text)
