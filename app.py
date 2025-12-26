@@ -74,10 +74,10 @@ implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95)
 risk_free_rate = 0.045
 
 # --- TABS ---
-tab_math, tab_ai = st.tabs(["⚔️ Scenario Battle (Compare A vs B)", "📸 Chart Analyst (AI)"])
+tab_math, tab_ai = st.tabs(["⚔️ Scenario Battle & Heatmap", "📸 Chart Analyst (AI)"])
 
 # =========================================================
-#  TAB 1: SCENARIO BATTLE (A vs B)
+#  TAB 1: SCENARIO BATTLE + HEATMAP
 # =========================================================
 with tab_math:
     st.subheader(f"⚖️ Compare Two Outcomes")
@@ -93,18 +93,14 @@ with tab_math:
     # ==========================
     with col_a:
         st.info("### 🔵 Scenario A (Plan A)")
-        
-        # Sliders for A
         sim_date_a = st.slider("📅 Date (Scenario A)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=5), key="date_a", format="MMM DD")
         sim_price_a = st.slider("💲 Stock Price (Scenario A)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_a")
         
-        # Math for A
         days_a = (expiration_date - sim_date_a).days
         years_a = max(days_a / 365.0, 0.0001)
         opt_price_a = black_scholes(sim_price_a, strike_price, years_a, risk_free_rate, implied_volatility)
         profit_a = (opt_price_a * 100 * contracts) - (entry_price * 100 * contracts)
         
-        # Display A
         st.markdown(f"**Option Value:** ${opt_price_a:.2f}")
         st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
 
@@ -113,18 +109,14 @@ with tab_math:
     # ==========================
     with col_b:
         st.warning("### 🟠 Scenario B (Plan B)")
-        
-        # Sliders for B
         sim_date_b = st.slider("📅 Date (Scenario B)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=20), key="date_b", format="MMM DD")
         sim_price_b = st.slider("💲 Stock Price (Scenario B)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price * 1.1), step=1.0, key="price_b")
         
-        # Math for B
         days_b = (expiration_date - sim_date_b).days
         years_b = max(days_b / 365.0, 0.0001)
         opt_price_b = black_scholes(sim_price_b, strike_price, years_b, risk_free_rate, implied_volatility)
         profit_b = (opt_price_b * 100 * contracts) - (entry_price * 100 * contracts)
         
-        # Display B
         st.markdown(f"**Option Value:** ${opt_price_b:.2f}")
         st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
 
@@ -141,25 +133,52 @@ with tab_math:
     else:
         st.info("🤝 Both Scenarios result in the exact same profit.")
 
-    # --- DOWNLOAD DATA ---
-    st.markdown("### 📥 Export Data")
-    
-    # Create simple dataframe for export
-    data = {
+    # --- DOWNLOAD COMPARISON DATA ---
+    data_comp = {
         "Metric": ["Date", "Stock Price", "Option Price", "Total Profit"],
         "Scenario A": [sim_date_a, sim_price_a, round(opt_price_a, 2), round(profit_a, 2)],
-        "Scenario B": [sim_date_b, sim_price_b, round(opt_price_b, 2), round(profit_b, 2)],
-        "Difference (A - B)": [f"{(sim_date_a - sim_date_b).days} days", round(sim_price_a - sim_price_b, 2), round(opt_price_a - opt_price_b, 2), round(profit_a - profit_b, 2)]
+        "Scenario B": [sim_date_b, sim_price_b, round(opt_price_b, 2), round(profit_b, 2)]
     }
-    df_compare = pd.DataFrame(data)
+    csv_comp = pd.DataFrame(data_comp).to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Comparison CSV", csv_comp, "Comparison.csv", "text/csv")
+
+    # ==========================
+    # 🗺️ THE HEATMAP (IT IS BACK!)
+    # ==========================
+    st.markdown("---")
+    st.subheader("🗺️ Profit Landscape (Heatmap)")
+    st.write("This map shows the 'Profit Zones' for your contract settings.")
+
+    # Generate Heatmap Data
+    prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
+    future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
+    heatmap_data = []
     
-    csv = df_compare.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Comparison CSV",
-        data=csv,
-        file_name=f"Comparison_{date.today()}.csv",
-        mime="text/csv",
-    )
+    for d in future_dates:
+        t_years = max((expiration_date - d).days / 365.0, 0.0001)
+        for p in prices:
+            opt = black_scholes(p, strike_price, t_years, risk_free_rate, implied_volatility)
+            pl = (opt - entry_price) * 100 * contracts
+            heatmap_data.append({
+                "Date": d.strftime('%Y-%m-%d'), 
+                "Stock Price": round(p, 2), 
+                "Profit": round(pl, 2)
+            })
+            
+    df_heatmap = pd.DataFrame(heatmap_data)
+
+    # Render Heatmap
+    heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
+        x='Date:O', 
+        y='Stock Price:O', 
+        color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), 
+        tooltip=['Date', 'Stock Price', 'Profit']
+    ).properties(height=400)
+    st.altair_chart(heatmap_chart, use_container_width=True)
+
+    # --- DOWNLOAD HEATMAP DATA ---
+    csv_map = df_heatmap.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Full Heatmap Data (CSV)", csv_map, "Heatmap_Data.csv", "text/csv")
 
     # --- Q&A FOR COMPARISON ---
     st.markdown("---")
@@ -181,23 +200,10 @@ with tab_math:
                     
                     context = f"""
                     You are a trading expert. User is comparing two scenarios for a {symbol} Call Option.
-                    
-                    GLOBAL SETTINGS:
-                    - Strike: ${strike_price}, Expiration: {expiration_date}, Buy Price: ${entry_price}
-                    
-                    SCENARIO A (BLUE):
-                    - Date: {sim_date_a}
-                    - Stock Price: ${sim_price_a}
-                    - Net Profit: ${profit_a}
-                    
-                    SCENARIO B (ORANGE):
-                    - Date: {sim_date_b}
-                    - Stock Price: ${sim_price_b}
-                    - Net Profit: ${profit_b}
-                    
+                    GLOBAL SETTINGS: Strike: ${strike_price}, Expiration: {expiration_date}, Buy Price: ${entry_price}
+                    SCENARIO A (BLUE): Date: {sim_date_a}, Stock Price: ${sim_price_a}, Net Profit: ${profit_a}
+                    SCENARIO B (ORANGE): Date: {sim_date_b}, Stock Price: ${sim_price_b}, Net Profit: ${profit_b}
                     User Question: {comp_question}
-                    
-                    Compare the risks (Time Decay in B vs A) and rewards. Which path seems safer?
                     """
                     
                     response = model.generate_content(context)
@@ -208,11 +214,7 @@ with tab_math:
 
     if st.session_state["compare_ai_response"]:
         st.info(st.session_state["compare_ai_response"])
-        st.download_button(
-            label="📥 Download Explanation",
-            data=st.session_state["compare_ai_response"],
-            file_name="Gemini_Comparison.txt"
-        )
+        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Gemini_Comparison.txt")
 
 # =========================================================
 #  TAB 2: AI ANALYST (UNCHANGED)
@@ -259,11 +261,7 @@ with tab_ai:
                         st.error(f"Error: {e}")
 
         if st.session_state["ai_analysis_text"]:
-            st.download_button(
-                label="📥 Download AI Report",
-                data=st.session_state["ai_analysis_text"],
-                file_name=f"{symbol}_AI_Analysis.txt"
-            )
+            st.download_button("📥 Download AI Report", st.session_state["ai_analysis_text"], f"{symbol}_AI_Analysis.txt")
 
         st.markdown("---")
         if "chart_q_response" not in st.session_state:
@@ -289,8 +287,4 @@ with tab_ai:
 
         if st.session_state["chart_q_response"]:
             st.info(st.session_state["chart_q_response"])
-            st.download_button(
-                label="📥 Download Q&A Response",
-                data=st.session_state["chart_q_response"],
-                file_name=f"Gemini_Chart_QA.txt"
-            )
+            st.download_button("📥 Download Q&A Response", st.session_state["chart_q_response"], "Gemini_Chart_QA.txt")
