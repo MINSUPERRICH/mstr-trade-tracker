@@ -55,8 +55,8 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
 # =========================================================
 st.title("🚀 MSTR Option Command Center")
 
-# --- SIDEBAR (Global Settings) ---
-st.sidebar.header("📝 Global Trade Settings")
+# --- SIDEBAR (Market Conditions) ---
+st.sidebar.header("🌍 Market Conditions")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
@@ -65,22 +65,20 @@ else:
 st.sidebar.markdown("---")
 symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
 current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
-strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
-expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
-purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
-entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
-contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
 
+st.sidebar.info("💡 **Tip:** Strikes and Dates are now set inside the 'Scenario Battle' tab so you can compare different contracts.")
+
 # --- TABS ---
-tab_math, tab_ai = st.tabs(["⚔️ Scenario Battle & Heatmap", "📸 Chart Analyst (AI)"])
+tab_math, tab_ai = st.tabs(["⚔️ Strategy Battle (Compare Contracts)", "📸 Chart Analyst (AI)"])
 
 # =========================================================
 #  TAB 1: SCENARIO BATTLE + HEATMAP
 # =========================================================
 with tab_math:
-    st.subheader(f"⚖️ Compare Two Outcomes")
+    st.subheader(f"⚖️ Compare Strategies: Strike vs Strike / Exp vs Exp")
+    st.write("Define two different option contracts (or the same one) and see which performs better.")
     
     if st.button("🔄 Reset Scenarios"):
         st.rerun()
@@ -92,32 +90,60 @@ with tab_math:
     # 🔵 SCENARIO A (LEFT)
     # ==========================
     with col_a:
-        st.info("### 🔵 Scenario A (Plan A)")
-        sim_date_a = st.slider("📅 Date (Scenario A)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=5), key="date_a", format="MMM DD")
-        sim_price_a = st.slider("💲 Stock Price (Scenario A)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_a")
+        st.info("### 🔵 Strategy A")
         
-        days_a = (expiration_date - sim_date_a).days
+        # 1. Contract Details A
+        st.markdown("**1. Contract Details**")
+        strike_a = st.number_input("Strike Price ($)", value=157.50, step=0.50, key="strike_a")
+        exp_date_a = st.date_input("Expiration Date", value=date(2026, 1, 9), key="exp_a")
+        entry_price_a = st.number_input("Entry Price (Paid)", value=8.55, step=0.10, key="entry_a")
+        contracts_a = st.number_input("Contracts", value=1, step=1, key="count_a")
+        
+        st.markdown("---")
+        
+        # 2. Simulation Sliders A
+        st.markdown("**2. Future Scenario**")
+        sim_date_a = st.slider("📅 Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="date_a", format="MMM DD")
+        sim_price_a = st.slider("💲 Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_a")
+        
+        # Math for A
+        days_a = (exp_date_a - sim_date_a).days
         years_a = max(days_a / 365.0, 0.0001)
-        opt_price_a = black_scholes(sim_price_a, strike_price, years_a, risk_free_rate, implied_volatility)
-        profit_a = (opt_price_a * 100 * contracts) - (entry_price * 100 * contracts)
+        opt_price_a = black_scholes(sim_price_a, strike_a, years_a, risk_free_rate, implied_volatility)
+        profit_a = (opt_price_a * 100 * contracts_a) - (entry_price_a * 100 * contracts_a)
         
-        st.markdown(f"**Option Value:** ${opt_price_a:.2f}")
+        # Display A
+        st.metric("Est. Option Value", f"${opt_price_a:.2f}")
         st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
 
     # ==========================
     # 🟠 SCENARIO B (RIGHT)
     # ==========================
     with col_b:
-        st.warning("### 🟠 Scenario B (Plan B)")
-        sim_date_b = st.slider("📅 Date (Scenario B)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=20), key="date_b", format="MMM DD")
-        sim_price_b = st.slider("💲 Stock Price (Scenario B)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price * 1.1), step=1.0, key="price_b")
+        st.warning("### 🟠 Strategy B")
         
-        days_b = (expiration_date - sim_date_b).days
+        # 1. Contract Details B (Defaults to same as A for easy compare)
+        st.markdown("**1. Contract Details**")
+        strike_b = st.number_input("Strike Price ($)", value=157.50, step=0.50, key="strike_b")
+        exp_date_b = st.date_input("Expiration Date", value=date(2026, 1, 9), key="exp_b")
+        entry_price_b = st.number_input("Entry Price (Paid)", value=8.55, step=0.10, key="entry_b")
+        contracts_b = st.number_input("Contracts", value=1, step=1, key="count_b")
+        
+        st.markdown("---")
+        
+        # 2. Simulation Sliders B
+        st.markdown("**2. Future Scenario**")
+        sim_date_b = st.slider("📅 Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="date_b", format="MMM DD")
+        sim_price_b = st.slider("💲 Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_b")
+        
+        # Math for B
+        days_b = (exp_date_b - sim_date_b).days
         years_b = max(days_b / 365.0, 0.0001)
-        opt_price_b = black_scholes(sim_price_b, strike_price, years_b, risk_free_rate, implied_volatility)
-        profit_b = (opt_price_b * 100 * contracts) - (entry_price * 100 * contracts)
+        opt_price_b = black_scholes(sim_price_b, strike_b, years_b, risk_free_rate, implied_volatility)
+        profit_b = (opt_price_b * 100 * contracts_b) - (entry_price_b * 100 * contracts_b)
         
-        st.markdown(f"**Option Value:** ${opt_price_b:.2f}")
+        # Display B
+        st.metric("Est. Option Value", f"${opt_price_b:.2f}")
         st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
 
     # ==========================
@@ -127,27 +153,35 @@ with tab_math:
     diff = profit_a - profit_b
     
     if diff > 0:
-        st.success(f"🏆 **Scenario A Wins!** It makes **${diff:,.2f}** more than Scenario B.")
+        st.success(f"🏆 **Strategy A Wins!** It makes **${diff:,.2f}** more than Strategy B.")
     elif diff < 0:
-        st.warning(f"🏆 **Scenario B Wins!** It makes **${abs(diff):,.2f}** more than Scenario A.")
+        st.warning(f"🏆 **Strategy B Wins!** It makes **${abs(diff):,.2f}** more than Strategy A.")
     else:
-        st.info("🤝 Both Scenarios result in the exact same profit.")
+        st.info("🤝 Both Strategies result in the exact same profit.")
 
     # --- DOWNLOAD COMPARISON DATA ---
     data_comp = {
-        "Metric": ["Date", "Stock Price", "Option Price", "Total Profit"],
-        "Scenario A": [sim_date_a, sim_price_a, round(opt_price_a, 2), round(profit_a, 2)],
-        "Scenario B": [sim_date_b, sim_price_b, round(opt_price_b, 2), round(profit_b, 2)]
+        "Metric": ["Contract", "Expiration", "Strike", "Sim Date", "Stock Price", "Total Profit"],
+        "Strategy A": ["Call", exp_date_a, strike_a, sim_date_a, sim_price_a, round(profit_a, 2)],
+        "Strategy B": ["Call", exp_date_b, strike_b, sim_date_b, sim_price_b, round(profit_b, 2)]
     }
     csv_comp = pd.DataFrame(data_comp).to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Comparison CSV", csv_comp, "Comparison.csv", "text/csv")
+    st.download_button("📥 Download Comparison CSV", csv_comp, "Strategy_Comparison.csv", "text/csv")
 
     # ==========================
-    # 🗺️ THE HEATMAP (IT IS BACK!)
+    # 🗺️ THE HEATMAP (SELECTOR)
     # ==========================
     st.markdown("---")
     st.subheader("🗺️ Profit Landscape (Heatmap)")
-    st.write("This map shows the 'Profit Zones' for your contract settings.")
+    
+    # Toggle to choose which contract to map
+    map_choice = st.radio("Show Heatmap for:", ["Strategy A 🔵", "Strategy B 🟠"], horizontal=True)
+    
+    # Set variables based on choice
+    if map_choice == "Strategy A 🔵":
+        h_strike, h_exp, h_entry, h_contracts = strike_a, exp_date_a, entry_price_a, contracts_a
+    else:
+        h_strike, h_exp, h_entry, h_contracts = strike_b, exp_date_b, entry_price_b, contracts_b
 
     # Generate Heatmap Data
     prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
@@ -155,10 +189,10 @@ with tab_math:
     heatmap_data = []
     
     for d in future_dates:
-        t_years = max((expiration_date - d).days / 365.0, 0.0001)
+        t_years = max((h_exp - d).days / 365.0, 0.0001)
         for p in prices:
-            opt = black_scholes(p, strike_price, t_years, risk_free_rate, implied_volatility)
-            pl = (opt - entry_price) * 100 * contracts
+            opt = black_scholes(p, h_strike, t_years, risk_free_rate, implied_volatility)
+            pl = (opt - h_entry) * 100 * h_contracts
             heatmap_data.append({
                 "Date": d.strftime('%Y-%m-%d'), 
                 "Stock Price": round(p, 2), 
@@ -178,7 +212,7 @@ with tab_math:
 
     # --- DOWNLOAD HEATMAP DATA ---
     csv_map = df_heatmap.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Full Heatmap Data (CSV)", csv_map, "Heatmap_Data.csv", "text/csv")
+    st.download_button("📥 Download Heatmap Data (CSV)", csv_map, "Heatmap_Data.csv", "text/csv")
 
     # --- Q&A FOR COMPARISON ---
     st.markdown("---")
@@ -187,23 +221,33 @@ with tab_math:
     if "compare_ai_response" not in st.session_state:
         st.session_state["compare_ai_response"] = ""
 
-    comp_question = st.text_input("Ask a question (e.g., 'Is waiting for Scenario B worth the risk?')", key="comp_q")
+    comp_question = st.text_input("Ask a question (e.g., 'Why did the cheaper strike lose money?')", key="comp_q")
     
     if st.button("Ask Gemini (Comparison)"):
         if not api_key:
             st.error("Missing API Key")
         else:
-            with st.spinner("Analyzing both scenarios..."):
+            with st.spinner("Analyzing strategy battle..."):
                 try:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
                     
                     context = f"""
-                    You are a trading expert. User is comparing two scenarios for a {symbol} Call Option.
-                    GLOBAL SETTINGS: Strike: ${strike_price}, Expiration: {expiration_date}, Buy Price: ${entry_price}
-                    SCENARIO A (BLUE): Date: {sim_date_a}, Stock Price: ${sim_price_a}, Net Profit: ${profit_a}
-                    SCENARIO B (ORANGE): Date: {sim_date_b}, Stock Price: ${sim_price_b}, Net Profit: ${profit_b}
+                    You are a trading expert. User is comparing two DIFFERENT option contracts for {symbol}.
+                    
+                    STRATEGY A (BLUE):
+                    - Strike: ${strike_a}, Exp: {exp_date_a}, Cost: ${entry_price_a}
+                    - Scenario: Sell on {sim_date_a} @ Stock ${sim_price_a}
+                    - Result: ${profit_a} Profit
+                    
+                    STRATEGY B (ORANGE):
+                    - Strike: ${strike_b}, Exp: {exp_date_b}, Cost: ${entry_price_b}
+                    - Scenario: Sell on {sim_date_b} @ Stock ${sim_price_b}
+                    - Result: ${profit_b} Profit
+                    
                     User Question: {comp_question}
+                    
+                    Compare the Greeks (Gamma/Theta) implicitly based on these setups. Which trade had better risk/reward?
                     """
                     
                     response = model.generate_content(context)
@@ -249,7 +293,7 @@ with tab_ai:
                         Analyze these {len(images)} images.
                         1. Compare the data.
                         2. Is the sentiment Bullish or Bearish?
-                        3. I hold a Long Call (Strike ${strike_price}, Exp {expiration_date}). Recommendation?
+                        3. Recommendation?
                         """
                         
                         content = [prompt] + images
