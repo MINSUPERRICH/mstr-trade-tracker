@@ -55,8 +55,8 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
 # =========================================================
 st.title("🚀 MSTR Option Command Center")
 
-# --- SIDEBAR ---
-st.sidebar.header("📝 Trade Settings")
+# --- SIDEBAR (Global Settings) ---
+st.sidebar.header("📝 Global Trade Settings")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
@@ -74,137 +74,153 @@ implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95)
 risk_free_rate = 0.045
 
 # --- TABS ---
-tab_math, tab_ai = st.tabs(["🔮 Profit Simulator (Math)", "📸 Chart Analyst (AI)"])
+tab_math, tab_ai = st.tabs(["⚔️ Scenario Battle (Compare A vs B)", "📸 Chart Analyst (AI)"])
 
 # =========================================================
-#  TAB 1: MATH SIMULATOR + DOWNLOADS
+#  TAB 1: SCENARIO BATTLE (A vs B)
 # =========================================================
 with tab_math:
-    st.subheader(f"📊 {symbol} Price Simulator")
+    st.subheader(f"⚖️ Compare Two Outcomes")
     
-    # FORCE RECALCULATION BUTTON
-    if st.button("🔄 Force Recalculate (Update Dates)"):
+    if st.button("🔄 Reset Scenarios"):
         st.rerun()
 
-    col_sim1, col_sim2 = st.columns(2)
-    with col_sim1:
-        default_sim_date = max(purchase_date, date.today())
-        sim_date = st.slider("📅 Future Date", min_value=purchase_date, max_value=expiration_date, value=default_sim_date, format="MMM DD")
-    with col_sim2:
-        sim_price = st.slider("💲 Future Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0)
+    # --- LAYOUT: TWO COLUMNS ---
+    col_a, col_b = st.columns(2)
 
-    # Math Calculations
-    days_to_expiry_sim = (expiration_date - sim_date).days
-    time_to_expiry_years = max(days_to_expiry_sim / 365.0, 0.0001)
-    projected_option_price = black_scholes(sim_price, strike_price, time_to_expiry_years, risk_free_rate, implied_volatility)
-    net_profit = (projected_option_price * 100 * contracts) - (entry_price * 100 * contracts)
+    # ==========================
+    # 🔵 SCENARIO A (LEFT)
+    # ==========================
+    with col_a:
+        st.info("### 🔵 Scenario A (Plan A)")
+        
+        # Sliders for A
+        sim_date_a = st.slider("📅 Date (Scenario A)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=5), key="date_a", format="MMM DD")
+        sim_price_a = st.slider("💲 Stock Price (Scenario A)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_a")
+        
+        # Math for A
+        days_a = (expiration_date - sim_date_a).days
+        years_a = max(days_a / 365.0, 0.0001)
+        opt_price_a = black_scholes(sim_price_a, strike_price, years_a, risk_free_rate, implied_volatility)
+        profit_a = (opt_price_a * 100 * contracts) - (entry_price * 100 * contracts)
+        
+        # Display A
+        st.markdown(f"**Option Value:** ${opt_price_a:.2f}")
+        st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
+
+    # ==========================
+    # 🟠 SCENARIO B (RIGHT)
+    # ==========================
+    with col_b:
+        st.warning("### 🟠 Scenario B (Plan B)")
+        
+        # Sliders for B
+        sim_date_b = st.slider("📅 Date (Scenario B)", min_value=purchase_date, max_value=expiration_date, value=date.today() + timedelta(days=20), key="date_b", format="MMM DD")
+        sim_price_b = st.slider("💲 Stock Price (Scenario B)", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price * 1.1), step=1.0, key="price_b")
+        
+        # Math for B
+        days_b = (expiration_date - sim_date_b).days
+        years_b = max(days_b / 365.0, 0.0001)
+        opt_price_b = black_scholes(sim_price_b, strike_price, years_b, risk_free_rate, implied_volatility)
+        profit_b = (opt_price_b * 100 * contracts) - (entry_price * 100 * contracts)
+        
+        # Display B
+        st.markdown(f"**Option Value:** ${opt_price_b:.2f}")
+        st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
+
+    # ==========================
+    # 🏆 THE COMPARISON RESULT
+    # ==========================
+    st.write("---")
+    diff = profit_a - profit_b
     
-    # Display Metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Date", sim_date.strftime('%b %d'))
-    m2.metric("Stock Price", f"${sim_price:.2f}")
-    m3.metric("Option Price", f"${projected_option_price:.2f}")
-    m4.metric("Net Profit", f"${net_profit:,.2f}", delta_color="normal" if net_profit >= 0 else "inverse")
+    if diff > 0:
+        st.success(f"🏆 **Scenario A Wins!** It makes **${diff:,.2f}** more than Scenario B.")
+    elif diff < 0:
+        st.warning(f"🏆 **Scenario B Wins!** It makes **${abs(diff):,.2f}** more than Scenario A.")
+    else:
+        st.info("🤝 Both Scenarios result in the exact same profit.")
 
-    # Heatmap Calculation
-    st.markdown("---")
-    prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
-    future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
-    heatmap_data = []
+    # --- DOWNLOAD DATA ---
+    st.markdown("### 📥 Export Data")
     
-    for d in future_dates:
-        t_years = max((expiration_date - d).days / 365.0, 0.0001)
-        for p in prices:
-            opt = black_scholes(p, strike_price, t_years, risk_free_rate, implied_volatility)
-            pl = (opt - entry_price) * 100 * contracts
-            heatmap_data.append({
-                "Date": d.strftime('%Y-%m-%d'), 
-                "Stock Price": round(p, 2), 
-                "Option Price": round(opt, 2),
-                "Profit": round(pl, 2)
-            })
-            
-    df_heatmap = pd.DataFrame(heatmap_data)
-
-    # DOWNLOAD BUTTON FOR SIMULATOR CSV
-    csv = df_heatmap.to_csv(index=False).encode('utf-8')
+    # Create simple dataframe for export
+    data = {
+        "Metric": ["Date", "Stock Price", "Option Price", "Total Profit"],
+        "Scenario A": [sim_date_a, sim_price_a, round(opt_price_a, 2), round(profit_a, 2)],
+        "Scenario B": [sim_date_b, sim_price_b, round(opt_price_b, 2), round(profit_b, 2)],
+        "Difference (A - B)": [f"{(sim_date_a - sim_date_b).days} days", round(sim_price_a - sim_price_b, 2), round(opt_price_a - opt_price_b, 2), round(profit_a - profit_b, 2)]
+    }
+    df_compare = pd.DataFrame(data)
+    
+    csv = df_compare.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Download Simulator Data (CSV)",
+        label="📥 Download Comparison CSV",
         data=csv,
-        file_name=f"{symbol}_simulation_{date.today()}.csv",
+        file_name=f"Comparison_{date.today()}.csv",
         mime="text/csv",
     )
 
-    # Chart Display
-    c = alt.Chart(df_heatmap).mark_rect().encode(
-        x='Date:O', y='Stock Price:O', color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), tooltip=['Date', 'Stock Price', 'Profit']
-    ).properties(height=350)
-    st.altair_chart(c, use_container_width=True)
-
-    # --- Q&A FOR MATH TAB ---
-    st.markdown("### 💬 Ask about this Scenario")
+    # --- Q&A FOR COMPARISON ---
+    st.markdown("---")
+    st.markdown("### 💬 Ask about this Comparison")
     
-    # Initialize session state for Q&A Text
-    if "math_ai_response" not in st.session_state:
-        st.session_state["math_ai_response"] = ""
+    if "compare_ai_response" not in st.session_state:
+        st.session_state["compare_ai_response"] = ""
 
-    math_question = st.text_input("Ask a question about these numbers...", key="math_q")
+    comp_question = st.text_input("Ask a question (e.g., 'Is waiting for Scenario B worth the risk?')", key="comp_q")
     
-    if st.button("Ask Gemini (Simulator)"):
+    if st.button("Ask Gemini (Comparison)"):
         if not api_key:
             st.error("Missing API Key")
         else:
-            with st.spinner("Thinking..."):
+            with st.spinner("Analyzing both scenarios..."):
                 try:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel('gemini-2.0-flash')
                     
                     context = f"""
-                    You are a financial trading expert. The user is simulating a {symbol} Call Option.
+                    You are a trading expert. User is comparing two scenarios for a {symbol} Call Option.
                     
-                    CRITICAL TRADE DETAILS:
-                    - Strike Price: ${strike_price}
-                    - Expiration Date: {expiration_date}
-                    - Purchase Price: ${entry_price}
-                    - Implied Volatility: {implied_volatility * 100}%
+                    GLOBAL SETTINGS:
+                    - Strike: ${strike_price}, Expiration: {expiration_date}, Buy Price: ${entry_price}
                     
-                    SIMULATION SCENARIO:
-                    - Simulated Date: {sim_date}
-                    - Simulated Stock Price: ${sim_price}
-                    - Simulated Option Price: ${projected_option_price}
-                    - Simulated Net Profit: ${net_profit}
+                    SCENARIO A (BLUE):
+                    - Date: {sim_date_a}
+                    - Stock Price: ${sim_price_a}
+                    - Net Profit: ${profit_a}
                     
-                    User Question: {math_question}
+                    SCENARIO B (ORANGE):
+                    - Date: {sim_date_b}
+                    - Stock Price: ${sim_price_b}
+                    - Net Profit: ${profit_b}
                     
-                    Please explain the math or strategy based on these exact numbers.
+                    User Question: {comp_question}
+                    
+                    Compare the risks (Time Decay in B vs A) and rewards. Which path seems safer?
                     """
                     
                     response = model.generate_content(context)
-                    st.session_state["math_ai_response"] = response.text
+                    st.session_state["compare_ai_response"] = response.text
                     
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-    # Display Response & Download Button
-    if st.session_state["math_ai_response"]:
-        st.info(st.session_state["math_ai_response"])
-        
-        # 🆕 NEW DOWNLOAD BUTTON FOR Q&A
+    if st.session_state["compare_ai_response"]:
+        st.info(st.session_state["compare_ai_response"])
         st.download_button(
-            label="📥 Download Gemini Explanation (.txt)",
-            data=st.session_state["math_ai_response"],
-            file_name=f"Gemini_Scenario_Explanation_{date.today()}.txt",
-            mime="text/plain"
+            label="📥 Download Explanation",
+            data=st.session_state["compare_ai_response"],
+            file_name="Gemini_Comparison.txt"
         )
 
 # =========================================================
-#  TAB 2: AI ANALYST + DOWNLOADS
+#  TAB 2: AI ANALYST (UNCHANGED)
 # =========================================================
 with tab_ai:
     st.subheader("🤖 AI Chart Analysis")
     uploaded_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
     
-    # Initialize session state for AI response if not exists
     if "ai_analysis_text" not in st.session_state:
         st.session_state["ai_analysis_text"] = ""
 
@@ -228,7 +244,7 @@ with tab_ai:
                         
                         prompt = f"""
                         You are an expert options trader specializing in {symbol}.
-                        Analyze these {len(images)} images (Technical Charts/Option Chains).
+                        Analyze these {len(images)} images.
                         1. Compare the data.
                         2. Is the sentiment Bullish or Bearish?
                         3. I hold a Long Call (Strike ${strike_price}, Exp {expiration_date}). Recommendation?
@@ -236,26 +252,23 @@ with tab_ai:
                         
                         content = [prompt] + images
                         response = model.generate_content(content)
-                        
-                        # Store response in session state
                         st.session_state["ai_analysis_text"] = response.text
                         st.markdown("### 🧠 Gemini's Verdict:")
                         st.write(response.text)
-                        
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-        # DOWNLOAD BUTTON FOR AI ANALYSIS
         if st.session_state["ai_analysis_text"]:
             st.download_button(
-                label="📥 Download AI Report (.txt)",
+                label="📥 Download AI Report",
                 data=st.session_state["ai_analysis_text"],
-                file_name=f"{symbol}_AI_Analysis_{date.today()}.txt",
-                mime="text/plain"
+                file_name=f"{symbol}_AI_Analysis.txt"
             )
 
-        # --- Q&A FOR AI TAB ---
         st.markdown("---")
+        if "chart_q_response" not in st.session_state:
+            st.session_state["chart_q_response"] = ""
+
         chart_question = st.text_input("Ask a follow-up question...", key="chart_q")
         
         if st.button("Ask Gemini (Chart)"):
@@ -270,6 +283,14 @@ with tab_ai:
                         model = genai.GenerativeModel('gemini-2.0-flash')
                         content = [chart_question] + st.session_state["last_images"]
                         response = model.generate_content(content)
-                        st.info(response.text)
+                        st.session_state["chart_q_response"] = response.text
                     except Exception as e:
                         st.error(f"Error: {e}")
+
+        if st.session_state["chart_q_response"]:
+            st.info(st.session_state["chart_q_response"])
+            st.download_button(
+                label="📥 Download Q&A Response",
+                data=st.session_state["chart_q_response"],
+                file_name=f"Gemini_Chart_QA.txt"
+            )
