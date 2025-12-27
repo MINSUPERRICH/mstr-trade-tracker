@@ -51,6 +51,15 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
         price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
     return price
 
+def calculate_delta(S, K, T, r, sigma, option_type='call'):
+    """Calculates the Delta of the option."""
+    if T <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    if option_type == 'call':
+        return norm.cdf(d1)
+    else:
+        return norm.cdf(d1) - 1
+
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
         df = yf.download(ticker, period="6mo", progress=False)
@@ -96,10 +105,10 @@ purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
 entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
-contracts = st.sidebar.number_input("Contracts", value=1, step=1) # Restored from global
+contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
 # --- TABS ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst", "📅 Catalyst & IV"])
+tab_math, tab_dashboard, tab_ai, tab_catalyst = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst", "📅 Catalyst & Checklist"])
 
 # =========================================================
 #  TAB 1: STRATEGY BATTLE
@@ -288,18 +297,19 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST & IV (UPDATED!)
+#  TAB 4: CATALYST & CHECKLIST (UPDATED!)
 # =========================================================
 with tab_catalyst:
-    st.subheader("📅 Catalyst & Volatility Checker")
+    st.subheader("📅 Catalyst & Pre-Trade Checklist")
     
     cat_sym = st.text_input("Enter Symbol to Check:", value=symbol, key="cat_sym")
     
+    # 1. CATALYSTS
     if st.button("🔎 Check Catalysts"):
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # 1. EARNINGS CHECK
+        # Earnings
         st.markdown("### 1. Earnings Calendar")
         try:
             cal = tick.calendar
@@ -318,7 +328,7 @@ with tab_catalyst:
             else: st.info("Earnings data unavailable.")
         except: st.warning("Could not retrieve earnings.")
 
-        # 2. NEWS CHECK
+        # News
         st.markdown("---")
         st.markdown("### 2. Recent News")
         try:
@@ -329,72 +339,79 @@ with tab_catalyst:
             else: st.info("No news found.")
         except: st.info("News feed unavailable.")
 
-    # 3. IMPLIED VOLATILITY (IV) CHECKER - NEW!
+    # 2. THE 6-POINT CHECKLIST
     st.markdown("---")
-    st.subheader("🔎 Option Implied Volatility (IV)")
-    st.write(f"Fetch the **REAL Market IV** for your contract: **Strike ${strike_price}**")
+    st.subheader("✅ The 6-Point Trade Checklist")
+    st.write("Evaluate your setup before entry. Data fetches live.")
     
-    if st.button("📊 Get Market IV"):
+    if st.button("🚀 Run Checklist"):
         tick = yf.Ticker(cat_sym)
+        checklist_data = []
+        
+        # Fetch Data
         try:
-            # 1. Get All Expiration Dates
-            avail_dates = tick.options
+            hist = tick.history(period="1mo")
+            current_price = hist['Close'].iloc[-1]
+            prev_close = hist['Close'].iloc[-2]
+            today_open = hist['Open'].iloc[-1]
+            avg_vol = hist['Volume'].mean()
+            today_vol = hist['Volume'].iloc[-1]
             
-            if not avail_dates:
-                st.error("No option chain data available for this symbol.")
-            else:
-                # 2. Find Closest Date
-                target_date_str = expiration_date.strftime('%Y-%m-%d')
-                
-                # Logic: Find exact match or closest date
-                if target_date_str in avail_dates:
-                    selected_date = target_date_str
-                    msg = f"Found exact expiration: {selected_date}"
-                else:
-                    # Find closest date
-                    target_dt = datetime.strptime(target_date_str, '%Y-%m-%d').date()
+            # 1. Price Gap Check
+            gap = abs(today_open - prev_close)
+            status_gap = "⚠️ Careful" if gap > 1.00 else "✅ Pass"
+            checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap, "Note": "Is gap > $1.00?"})
+            
+            # 2. Volume Activity Check
+            status_vol = "✅ Pass" if today_vol > avg_vol else "⚠️ Low"
+            checklist_data.append({"Check": "2. Volume Activity", "Value": f"{today_vol/1000000:.1f}M", "Result": status_vol, "Note": "Is Vol > Avg?"})
+            
+            # 3. IV Fear Check (Simple Trend)
+            # Fetch Option Chain for IV
+            try:
+                # Find closest date
+                avail_dates = tick.options
+                if avail_dates:
+                    target_dt = datetime.strptime(expiration_date.strftime('%Y-%m-%d'), '%Y-%m-%d').date()
                     closest_date = min(avail_dates, key=lambda x: abs(datetime.strptime(x, '%Y-%m-%d').date() - target_dt))
-                    selected_date = closest_date
-                    msg = f"⚠️ Target date {target_date_str} not found. Using closest: **{selected_date}**"
-
-                st.info(msg)
-                
-                # 3. Get Chain
-                opt_chain = tick.option_chain(selected_date)
-                calls = opt_chain.calls
-                
-                # 4. Find Strike
-                # Filter for the specific strike
-                specific_contract = calls[calls['strike'] == strike_price]
-                
-                if not specific_contract.empty:
-                    row = specific_contract.iloc[0]
-                    market_iv = row['impliedVolatility']
-                    volume = row['volume']
-                    oi = row['openInterest']
-                    last_price = row['lastPrice']
+                    chain = tick.option_chain(closest_date).calls
+                    contract = chain[chain['strike'] == strike_price]
                     
-                    # Display Results
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Market IV", f"{market_iv * 100:.2f}%", help="This is the real-time 'Fear' level.")
-                    m2.metric("Last Price", f"${last_price:.2f}")
-                    m3.metric("Volume", f"{int(volume) if not pd.isna(volume) else 0}")
-                    m4.metric("Open Interest", f"{int(oi) if not pd.isna(oi) else 0}")
-                    
-                    # Comparison Logic
-                    user_iv = implied_volatility # From sidebar
-                    diff_iv = (market_iv - user_iv) * 100
-                    
-                    st.write("---")
-                    if abs(diff_iv) < 5:
-                        st.success("✅ Your manual IV setting matches the market closely.")
-                    elif diff_iv > 0:
-                        st.warning(f"⚠️ Market IV is **{diff_iv:.1f}% higher** than your setting. Your options are actually **more expensive** than you think.")
-                    else:
-                        st.info(f"ℹ️ Market IV is **{abs(diff_iv):.1f}% lower** than your setting.")
+                    if not contract.empty:
+                        iv = contract.iloc[0]['impliedVolatility']
+                        opt_vol = contract.iloc[0]['volume']
+                        opt_oi = contract.iloc[0]['openInterest']
                         
-                else:
-                    st.warning(f"Strike Price ${strike_price} not found in {selected_date} chain. Available strikes: {list(calls['strike'].head(5))}...")
-                    
+                        # Rule of 16 (Daily Move)
+                        daily_move = current_price * (iv / 16)
+                        checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually if needed."})
+                        
+                        # 4. Rule of 16 Reality Check
+                        checklist_data.append({"Check": "4. Rule of 16 (Exp. Move)", "Value": f"${daily_move:.2f}", "Result": "ℹ️ Info", "Note": "Is Target < This?"})
+                        
+                        # 5. Vol vs OI
+                        status_voi = "✅ Pass" if opt_vol > opt_oi else "⚠️ Low Vol"
+                        checklist_data.append({"Check": "5. Vol vs OI", "Value": f"{opt_vol} / {opt_oi}", "Result": status_voi, "Note": "Is Vol > OI?"})
+                        
+                        # 6. Delta Check
+                        # Calculate Delta
+                        t_years = max((datetime.strptime(closest_date, '%Y-%m-%d').date() - date.today()).days / 365.0, 0.0001)
+                        delta = calculate_delta(current_price, strike_price, t_years, risk_free_rate, iv)
+                        status_delta = "✅ Pass" if delta >= 0.30 else "⚠️ Low Delta"
+                        checklist_data.append({"Check": "6. Delta Check", "Value": f"{delta:.2f}", "Result": status_delta, "Note": "Is Delta > 0.30?"})
+                        
+                    else:
+                        st.error("Strike not found for checklist.")
+            except Exception as e:
+                checklist_data.append({"Check": "Option Data", "Value": "Error", "Result": "❌ Fail", "Note": str(e)})
+
+            # Display Table
+            df_check = pd.DataFrame(checklist_data)
+            def highlight_res(val):
+                if "Pass" in val: return 'color: green; font-weight: bold'
+                if "Careful" in val or "Low" in val: return 'color: orange; font-weight: bold'
+                return ''
+            st.dataframe(df_check.style.applymap(highlight_res, subset=['Result']), use_container_width=True)
+            
         except Exception as e:
-            st.error(f"Error fetching option data: {e}")
+            st.error(f"Error running checklist: {e}")
