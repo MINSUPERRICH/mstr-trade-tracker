@@ -51,16 +51,16 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
         price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
     return price
 
-def calculate_dss_bressert(ticker, period=10, ema_period=9):
+def calculate_dss_data(ticker, period=10, ema_period=9):
     """
-    Calculates the Bressert Double Smoothed Stochastic.
+    Calculates DSS and returns the full DataFrame for charting.
     """
     try:
         df = yf.download(ticker, period="6mo", progress=False)
         if len(df) < period + ema_period:
-            return None, None
+            return None
 
-        # Handle Multi-index columns if yfinance returns them
+        # Handle Multi-index
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
@@ -68,6 +68,7 @@ def calculate_dss_bressert(ticker, period=10, ema_period=9):
         low = df['Low']
         close = df['Close']
 
+        # DSS Calculation Logic
         lowest_low = low.rolling(window=period).min()
         highest_high = high.rolling(window=period).max()
         stoch_raw = (close - lowest_low) / (highest_high - lowest_low) * 100
@@ -83,16 +84,14 @@ def calculate_dss_bressert(ticker, period=10, ema_period=9):
         stoch_smooth = (xPreCalc - lowest_smooth) / denominator * 100
         dss = stoch_smooth.ewm(span=ema_period, adjust=False).mean()
 
-        current_val = dss.iloc[-1]
-        current_price = close.iloc[-1]
+        # Add DSS to dataframe
+        df['DSS'] = dss
         
-        if isinstance(current_val, pd.Series): current_val = current_val.item()
-        if isinstance(current_price, pd.Series): current_price = current_price.item()
-
-        return round(current_val, 2), current_price
+        # Return only relevant columns, drop NaN
+        return df[['Close', 'DSS']].dropna().reset_index()
         
     except Exception as e:
-        return None, None
+        return None
 
 # =========================================================
 #  APP LAYOUT
@@ -116,7 +115,7 @@ risk_free_rate = 0.045
 tab_math, tab_dashboard, tab_ai = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst"])
 
 # =========================================================
-#  TAB 1: STRATEGY BATTLE (FULL RESTORED VERSION)
+#  TAB 1: STRATEGY BATTLE (UNCHANGED)
 # =========================================================
 with tab_math:
     st.subheader(f"⚖️ Compare Strategies")
@@ -267,16 +266,19 @@ with tab_math:
         st.info(st.session_state["compare_ai_response"])
         st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Gemini_Battle.txt")
 
-
 # =========================================================
-#  TAB 2: MARKET DASHBOARD (DSS BRESSERT)
+#  TAB 2: MARKET DASHBOARD (UPDATED WITH GRAPH)
 # =========================================================
 with tab_dashboard:
-    st.subheader("📊 DSS Bressert Scanner")
-    st.markdown("Scanner for **Double Smoothed Stochastic**. Green < 20 (Oversold), Red > 80 (Overbought).")
+    st.subheader("📊 DSS Bressert Scanner & Chart")
+    st.markdown("Scanner for **Double Smoothed Stochastic**. Green < 20 (Buy), Red > 80 (Sell).")
     
     default_tickers = "MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU"
     ticker_input = st.text_input("Enter Tickers (comma separated)", value=default_tickers)
+    
+    # Session state to hold scan results so they don't disappear when we click other buttons
+    if "scan_results" not in st.session_state:
+        st.session_state["scan_results"] = []
     
     if st.button("🔎 Scan Market"):
         tickers = [t.strip().upper() for t in ticker_input.split(",")]
@@ -284,27 +286,70 @@ with tab_dashboard:
         progress = st.progress(0)
         
         for i, tick in enumerate(tickers):
-            dss, price = calculate_dss_bressert(tick)
-            if dss is not None:
+            # We use calculate_dss_data just to get the last value for the table
+            df_hist = calculate_dss_data(tick)
+            
+            if df_hist is not None and not df_hist.empty:
+                dss_val = df_hist['DSS'].iloc[-1]
+                price = df_hist['Close'].iloc[-1]
+                
                 status = "Neutral"
-                if dss <= 20: status = "🟢 OVERSOLD (Buy Watch)"
-                elif dss >= 80: status = "🔴 OVERBOUGHT (Sell Watch)"
-                results.append({"Ticker": tick, "Price": f"${price:,.2f}", "DSS": dss, "Status": status})
+                if dss_val <= 20: status = "🟢 OVERSOLD (Buy Watch)"
+                elif dss_val >= 80: status = "🔴 OVERBOUGHT (Sell Watch)"
+                
+                results.append({"Ticker": tick, "Price": f"${price:,.2f}", "DSS": round(dss_val, 2), "Status": status})
+            
             progress.progress((i + 1) / len(tickers))
+        
         progress.empty()
+        st.session_state["scan_results"] = results
 
-        if results:
-            df_res = pd.DataFrame(results)
-            def color_status(val):
-                if "OVERSOLD" in val: return 'background-color: #d4edda; color: green; font-weight: bold'
-                elif "OVERBOUGHT" in val: return 'background-color: #f8d7da; color: red; font-weight: bold'
-                return ''
-            st.dataframe(df_res.style.applymap(color_status, subset=['Status']), use_container_width=True)
-        else:
-            st.error("No data found.")
+    # Display Table if results exist
+    if st.session_state["scan_results"]:
+        df_res = pd.DataFrame(st.session_state["scan_results"])
+        
+        def color_status(val):
+            if "OVERSOLD" in val: return 'background-color: #d4edda; color: green; font-weight: bold'
+            elif "OVERBOUGHT" in val: return 'background-color: #f8d7da; color: red; font-weight: bold'
+            return ''
+            
+        st.dataframe(df_res.style.applymap(color_status, subset=['Status']), use_container_width=True)
+        
+        # --- NEW GRAPH SECTION ---
+        st.write("---")
+        st.subheader("📉 DSS Indicator Chart")
+        
+        # Dropdown to pick a ticker found in the scan
+        found_tickers = [r["Ticker"] for r in st.session_state["scan_results"]]
+        selected_ticker = st.selectbox("Select Ticker to Chart:", found_tickers)
+        
+        if selected_ticker:
+            with st.spinner(f"Loading chart for {selected_ticker}..."):
+                df_chart = calculate_dss_data(selected_ticker)
+                
+                if df_chart is not None:
+                    # Base Chart
+                    base = alt.Chart(df_chart).encode(x='Date:T')
+                    
+                    # DSS Line
+                    line = base.mark_line(color='#1f77b4', strokeWidth=2).encode(
+                        y=alt.Y('DSS', scale=alt.Scale(domain=[0, 100])),
+                        tooltip=['Date', 'DSS', 'Close']
+                    )
+                    
+                    # Overbought Line (80)
+                    line_80 = alt.Chart(pd.DataFrame({'y': [80]})).mark_rule(color='red', strokeDash=[5, 5]).encode(y='y')
+                    
+                    # Oversold Line (20)
+                    line_20 = alt.Chart(pd.DataFrame({'y': [20]})).mark_rule(color='green', strokeDash=[5, 5]).encode(y='y')
+                    
+                    # Combine
+                    chart = (line + line_80 + line_20).properties(height=350).interactive()
+                    
+                    st.altair_chart(chart, use_container_width=True)
 
 # =========================================================
-#  TAB 3: AI ANALYST (FULL RESTORED VERSION)
+#  TAB 3: AI ANALYST (UNCHANGED)
 # =========================================================
 with tab_ai:
     st.subheader("🤖 AI Chart Analysis")
@@ -321,7 +366,6 @@ with tab_ai:
         for i, img in enumerate(images):
             with cols[i]: st.image(img, caption=f"Chart {i+1}", use_container_width=True)
 
-        # ANALYZE BUTTON
         if st.button("✨ Analyze All Files"):
             if not api_key: st.error("Missing API Key")
             else:
@@ -334,13 +378,11 @@ with tab_ai:
                         st.session_state["ai_analysis_text"] = response.text
                     except Exception as e: st.error(f"Error: {e}")
         
-        # ANALYSIS RESULT + DOWNLOAD
         if st.session_state["ai_analysis_text"]:
             st.markdown("### 🧠 Gemini's Verdict:")
             st.write(st.session_state["ai_analysis_text"])
             st.download_button("📥 Download Report", st.session_state["ai_analysis_text"], "AI_Report.txt")
 
-        # Q&A SECTION (TAB 3)
         st.markdown("---")
         chart_q = st.text_input("Ask a follow-up question...", key="chart_q")
         
@@ -356,7 +398,6 @@ with tab_ai:
                         st.session_state["chart_q_response"] = response.text
                     except Exception as e: st.error(f"Error: {e}")
 
-        # Q&A RESULT + DOWNLOAD
         if st.session_state["chart_q_response"]:
             st.info(st.session_state["chart_q_response"])
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Gemini_Chart_QA.txt")
