@@ -54,7 +54,7 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
 def calculate_dss_data(ticker, period=10, ema_period=9):
     """
     Calculates DSS and returns the full DataFrame for charting.
-    Now includes a SIGNAL LINE (4-period smoothing of DSS).
+    Includes SIGNAL LINE.
     """
     try:
         df = yf.download(ticker, period="6mo", progress=False)
@@ -271,7 +271,7 @@ with tab_math:
         st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Gemini_Battle.txt")
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD (UPDATED)
+#  TAB 2: MARKET DASHBOARD (UPDATED WITH DOWNLOAD)
 # =========================================================
 with tab_dashboard:
     st.subheader("📊 DSS Bressert Scanner & Chart")
@@ -341,7 +341,11 @@ with tab_dashboard:
             
         st.dataframe(df_res.style.applymap(color_status, subset=['Status']), use_container_width=True)
         
-        # --- GRAPH SECTION (UPDATED FOR SIGNAL LINE) ---
+        # 🆕 NEW DOWNLOAD BUTTON FOR SCAN RESULTS
+        csv_scan = df_res.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Scan Results (CSV)", csv_scan, "Market_Scan_Results.csv", "text/csv")
+        
+        # --- GRAPH SECTION ---
         st.write("---")
         st.subheader("📉 DSS Indicator Chart (Main + Signal)")
         
