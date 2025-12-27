@@ -54,6 +54,7 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
 def calculate_dss_data(ticker, period=10, ema_period=9):
     """
     Calculates DSS and returns the full DataFrame for charting.
+    Now includes a SIGNAL LINE (4-period smoothing of DSS).
     """
     try:
         df = yf.download(ticker, period="6mo", progress=False)
@@ -84,11 +85,14 @@ def calculate_dss_data(ticker, period=10, ema_period=9):
         stoch_smooth = (xPreCalc - lowest_smooth) / denominator * 100
         dss = stoch_smooth.ewm(span=ema_period, adjust=False).mean()
 
-        # Add DSS to dataframe
+        # Add DSS to dataframe (Main Line)
         df['DSS'] = dss
         
+        # Calculate Signal Line (Smoothing of DSS)
+        df['Signal'] = df['DSS'].ewm(span=4, adjust=False).mean()
+        
         # Return only relevant columns, drop NaN
-        return df[['Close', 'DSS']].dropna().reset_index()
+        return df[['Close', 'DSS', 'Signal']].dropna().reset_index()
         
     except Exception as e:
         return None
@@ -267,26 +271,48 @@ with tab_math:
         st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Gemini_Battle.txt")
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD (UPDATED WITH GRAPH)
+#  TAB 2: MARKET DASHBOARD (UPDATED)
 # =========================================================
 with tab_dashboard:
     st.subheader("📊 DSS Bressert Scanner & Chart")
     st.markdown("Scanner for **Double Smoothed Stochastic**. Green < 20 (Buy), Red > 80 (Sell).")
     
-    default_tickers = "MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU"
-    ticker_input = st.text_input("Enter Tickers (comma separated)", value=default_tickers)
+    # --- INPUTS: MANUAL + EXCEL ---
+    col_in1, col_in2 = st.columns(2)
+    with col_in1:
+        default_tickers = "MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU"
+        text_tickers = st.text_input("Manual Tickers (comma separated)", value=default_tickers)
     
-    # Session state to hold scan results so they don't disappear when we click other buttons
+    with col_in2:
+        uploaded_file = st.file_uploader("📂 Upload Excel List", type=['xlsx', 'xls'])
+
+    # Session state to hold scan results
     if "scan_results" not in st.session_state:
         st.session_state["scan_results"] = []
     
     if st.button("🔎 Scan Market"):
-        tickers = [t.strip().upper() for t in ticker_input.split(",")]
+        # 1. Gather Tickers from Text Input
+        final_tickers = [t.strip().upper() for t in text_tickers.split(",") if t.strip()]
+
+        # 2. Gather Tickers from Excel (if uploaded)
+        if uploaded_file is not None:
+            try:
+                df_upload = pd.read_excel(uploaded_file)
+                # Assume the first column contains the symbols
+                excel_tickers = df_upload.iloc[:, 0].astype(str).tolist()
+                final_tickers.extend([t.strip().upper() for t in excel_tickers if t.strip()])
+                st.success(f"Added {len(excel_tickers)} tickers from Excel.")
+            except Exception as e:
+                st.error(f"Error reading Excel: {e}")
+
+        # Remove duplicates
+        final_tickers = list(set(final_tickers))
+        
         results = []
         progress = st.progress(0)
         
-        for i, tick in enumerate(tickers):
-            # We use calculate_dss_data just to get the last value for the table
+        for i, tick in enumerate(final_tickers):
+            # Calculate Data
             df_hist = calculate_dss_data(tick)
             
             if df_hist is not None and not df_hist.empty:
@@ -299,12 +325,12 @@ with tab_dashboard:
                 
                 results.append({"Ticker": tick, "Price": f"${price:,.2f}", "DSS": round(dss_val, 2), "Status": status})
             
-            progress.progress((i + 1) / len(tickers))
+            progress.progress((i + 1) / len(final_tickers))
         
         progress.empty()
         st.session_state["scan_results"] = results
 
-    # Display Table if results exist
+    # Display Table
     if st.session_state["scan_results"]:
         df_res = pd.DataFrame(st.session_state["scan_results"])
         
@@ -315,11 +341,10 @@ with tab_dashboard:
             
         st.dataframe(df_res.style.applymap(color_status, subset=['Status']), use_container_width=True)
         
-        # --- NEW GRAPH SECTION ---
+        # --- GRAPH SECTION (UPDATED FOR SIGNAL LINE) ---
         st.write("---")
-        st.subheader("📉 DSS Indicator Chart")
+        st.subheader("📉 DSS Indicator Chart (Main + Signal)")
         
-        # Dropdown to pick a ticker found in the scan
         found_tickers = [r["Ticker"] for r in st.session_state["scan_results"]]
         selected_ticker = st.selectbox("Select Ticker to Chart:", found_tickers)
         
@@ -328,23 +353,24 @@ with tab_dashboard:
                 df_chart = calculate_dss_data(selected_ticker)
                 
                 if df_chart is not None:
-                    # Base Chart
-                    base = alt.Chart(df_chart).encode(x='Date:T')
+                    # Melt dataframe for multi-line plotting
+                    df_melt = df_chart.melt('Date', value_vars=['DSS', 'Signal'], var_name='Line', value_name='Value')
                     
-                    # DSS Line
-                    line = base.mark_line(color='#1f77b4', strokeWidth=2).encode(
-                        y=alt.Y('DSS', scale=alt.Scale(domain=[0, 100])),
-                        tooltip=['Date', 'DSS', 'Close']
+                    # Base Chart
+                    base = alt.Chart(df_melt).encode(x='Date:T')
+                    
+                    # Lines (Blue = DSS, Orange = Signal)
+                    lines = base.mark_line(strokeWidth=2).encode(
+                        y=alt.Y('Value', scale=alt.Scale(domain=[0, 100])),
+                        color=alt.Color('Line', scale=alt.Scale(domain=['DSS', 'Signal'], range=['#1f77b4', '#ff7f0e'])),
+                        tooltip=['Date', 'Line', 'Value']
                     )
                     
-                    # Overbought Line (80)
+                    # Guidelines
                     line_80 = alt.Chart(pd.DataFrame({'y': [80]})).mark_rule(color='red', strokeDash=[5, 5]).encode(y='y')
-                    
-                    # Oversold Line (20)
                     line_20 = alt.Chart(pd.DataFrame({'y': [20]})).mark_rule(color='green', strokeDash=[5, 5]).encode(y='y')
                     
-                    # Combine
-                    chart = (line + line_80 + line_20).properties(height=350).interactive()
+                    chart = (lines + line_80 + line_20).properties(height=350).interactive()
                     
                     st.altair_chart(chart, use_container_width=True)
 
