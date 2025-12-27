@@ -54,49 +54,42 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
 def calculate_dss_bressert(ticker, period=10, ema_period=9):
     """
     Calculates the Bressert Double Smoothed Stochastic.
-    Formula: EMA( Stochastic( EMA( Stochastic(Price) ) ) )
     """
     try:
-        # Fetch data (need enough history for smoothing)
-        df = yf.download(ticker, period="3mo", progress=False)
+        df = yf.download(ticker, period="6mo", progress=False)
         if len(df) < period + ema_period:
             return None, None
 
-        # 1. High/Low/Close
+        # Handle Multi-index columns if yfinance returns them
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
         high = df['High']
         low = df['Low']
         close = df['Close']
 
-        # 2. First Stochastic Calculation (Raw)
-        # (Close - LowestLow) / (HighestHigh - LowestLow)
         lowest_low = low.rolling(window=period).min()
         highest_high = high.rolling(window=period).max()
         stoch_raw = (close - lowest_low) / (highest_high - lowest_low) * 100
 
-        # 3. First Smoothing (EMA of Raw Stoch)
         xPreCalc = stoch_raw.ewm(span=ema_period, adjust=False).mean()
 
-        # 4. Second Stochastic Calculation (Stochastic of the Smoothed Line)
-        # Treat xPreCalc as the "Price" -> Find its range
         lowest_smooth = xPreCalc.rolling(window=period).min()
         highest_smooth = xPreCalc.rolling(window=period).max()
         
-        # Avoid division by zero
         denominator = highest_smooth - lowest_smooth
         denominator = denominator.replace(0, 1) 
         
         stoch_smooth = (xPreCalc - lowest_smooth) / denominator * 100
-
-        # 5. Final Smoothing (EMA of the Second Stoch) -> The DSS
         dss = stoch_smooth.ewm(span=ema_period, adjust=False).mean()
 
         current_val = dss.iloc[-1]
+        current_price = close.iloc[-1]
         
-        # Determine Status
-        if isinstance(current_val, pd.Series):
-             current_val = current_val.item()
+        if isinstance(current_val, pd.Series): current_val = current_val.item()
+        if isinstance(current_price, pd.Series): current_price = current_price.item()
 
-        return round(current_val, 2), df['Close'].iloc[-1].item()
+        return round(current_val, 2), current_price
         
     except Exception as e:
         return None, None
@@ -106,7 +99,7 @@ def calculate_dss_bressert(ticker, period=10, ema_period=9):
 # =========================================================
 st.title("🚀 MSTR Option Command Center")
 
-# --- SIDEBAR (Market Conditions) ---
+# --- SIDEBAR ---
 st.sidebar.header("🌍 Market Conditions")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -119,13 +112,11 @@ current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=1
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
 
-st.sidebar.info("💡 **Tip:** Go to 'Market Dashboard' to scan multiple stocks.")
-
 # --- TABS ---
 tab_math, tab_dashboard, tab_ai = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst"])
 
 # =========================================================
-#  TAB 1: SCENARIO BATTLE (UNCHANGED)
+#  TAB 1: STRATEGY BATTLE (FULL RESTORED VERSION)
 # =========================================================
 with tab_math:
     st.subheader(f"⚖️ Compare Strategies")
@@ -134,140 +125,238 @@ with tab_math:
 
     col_a, col_b = st.columns(2)
 
-    # SCENARIO A
+    # --- SCENARIO A ---
     with col_a:
         st.info("### 🔵 Strategy A")
-        strike_a = st.number_input("Strike Price ($)", value=157.50, step=0.50, key="strike_a")
-        exp_date_a = st.date_input("Expiration Date", value=date(2026, 1, 9), key="exp_a")
-        entry_price_a = st.number_input("Entry Price (Paid)", value=8.55, step=0.10, key="entry_a")
-        contracts_a = st.number_input("Contracts", value=1, step=1, key="count_a")
-        st.markdown("---")
-        sim_date_a = st.slider("📅 Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="date_a", format="MMM DD")
-        sim_price_a = st.slider("💲 Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_a")
+        st.markdown("**1. Contract Details**")
+        strike_a = st.number_input("Strike ($)", value=157.50, step=0.50, key="str_a")
+        exp_date_a = st.date_input("Expiration", value=date(2026, 1, 9), key="exp_a")
+        entry_price_a = st.number_input("Entry Price", value=8.55, step=0.10, key="ent_a")
+        contracts_a = st.number_input("Contracts", value=1, step=1, key="cnt_a")
+        
+        st.markdown("**2. Future Scenario**")
+        sim_date_a = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="d_a", format="MMM DD")
+        sim_price_a = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_a")
         
         days_a = (exp_date_a - sim_date_a).days
         years_a = max(days_a / 365.0, 0.0001)
         opt_price_a = black_scholes(sim_price_a, strike_a, years_a, risk_free_rate, implied_volatility)
         profit_a = (opt_price_a * 100 * contracts_a) - (entry_price_a * 100 * contracts_a)
+        
+        st.metric("Est. Value", f"${opt_price_a:.2f}")
         st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
 
-    # SCENARIO B
+    # --- SCENARIO B ---
     with col_b:
         st.warning("### 🟠 Strategy B")
-        strike_b = st.number_input("Strike Price ($)", value=157.50, step=0.50, key="strike_b")
-        exp_date_b = st.date_input("Expiration Date", value=date(2026, 1, 9), key="exp_b")
-        entry_price_b = st.number_input("Entry Price (Paid)", value=8.55, step=0.10, key="entry_b")
-        contracts_b = st.number_input("Contracts", value=1, step=1, key="count_b")
-        st.markdown("---")
-        sim_date_b = st.slider("📅 Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="date_b", format="MMM DD")
-        sim_price_b = st.slider("💲 Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="price_b")
+        st.markdown("**1. Contract Details**")
+        strike_b = st.number_input("Strike ($)", value=157.50, step=0.50, key="str_b")
+        exp_date_b = st.date_input("Expiration", value=date(2026, 1, 9), key="exp_b")
+        entry_price_b = st.number_input("Entry Price", value=8.55, step=0.10, key="ent_b")
+        contracts_b = st.number_input("Contracts", value=1, step=1, key="cnt_b")
+        
+        st.markdown("**2. Future Scenario**")
+        sim_date_b = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="d_b", format="MMM DD")
+        sim_price_b = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_b")
         
         days_b = (exp_date_b - sim_date_b).days
         years_b = max(days_b / 365.0, 0.0001)
         opt_price_b = black_scholes(sim_price_b, strike_b, years_b, risk_free_rate, implied_volatility)
         profit_b = (opt_price_b * 100 * contracts_b) - (entry_price_b * 100 * contracts_b)
+        
+        st.metric("Est. Value", f"${opt_price_b:.2f}")
         st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
 
-    # HEATMAP & DECAY (Simplified for brevity, insert full heatmap/decay code if desired or keep simple comparison)
+    # --- WINNER BANNER ---
     st.write("---")
     diff = profit_a - profit_b
     if diff > 0:
-        st.success(f"🏆 Strategy A Wins by ${diff:,.2f}")
+        st.success(f"🏆 **Strategy A Wins!** (+${diff:,.2f})")
+    elif diff < 0:
+        st.warning(f"🏆 **Strategy B Wins!** (+${abs(diff):,.2f})")
     else:
-        st.warning(f"🏆 Strategy B Wins by ${abs(diff):,.2f}")
+        st.info("🤝 Draw")
+
+    # --- DOWNLOAD COMPARISON CSV ---
+    data_comp = {
+        "Metric": ["Strike", "Exp", "Sim Date", "Stock Price", "Profit"],
+        "Strategy A": [strike_a, exp_date_a, sim_date_a, sim_price_a, round(profit_a, 2)],
+        "Strategy B": [strike_b, exp_date_b, sim_date_b, sim_price_b, round(profit_b, 2)]
+    }
+    st.download_button("📥 Download Comparison CSV", pd.DataFrame(data_comp).to_csv(index=False).encode('utf-8'), "Comparison.csv", "text/csv")
+
+    # --- HEATMAP SECTION ---
+    st.markdown("---")
+    st.subheader("🗺️ Profit Heatmap")
+    map_choice = st.radio("Show Map for:", ["Strategy A 🔵", "Strategy B 🟠"], horizontal=True)
+    
+    if map_choice == "Strategy A 🔵":
+        h_strike, h_exp, h_entry, h_contracts = strike_a, exp_date_a, entry_price_a, contracts_a
+    else:
+        h_strike, h_exp, h_entry, h_contracts = strike_b, exp_date_b, entry_price_b, contracts_b
+
+    prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
+    future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
+    heatmap_data = []
+    
+    for d in future_dates:
+        t_years = max((h_exp - d).days / 365.0, 0.0001)
+        for p in prices:
+            opt = black_scholes(p, h_strike, t_years, risk_free_rate, implied_volatility)
+            pl = (opt - h_entry) * 100 * h_contracts
+            heatmap_data.append({"Date": d.strftime('%Y-%m-%d'), "Stock Price": round(p, 2), "Profit": round(pl, 2)})
+            
+    df_heatmap = pd.DataFrame(heatmap_data)
+    
+    c = alt.Chart(df_heatmap).mark_rect().encode(
+        x='Date:O', y='Stock Price:O', 
+        color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)),
+        tooltip=['Date', 'Stock Price', 'Profit']
+    ).properties(height=350)
+    st.altair_chart(c, use_container_width=True)
+    
+    st.download_button("📥 Download Heatmap CSV", df_heatmap.to_csv(index=False).encode('utf-8'), "Heatmap.csv", "text/csv")
+
+    # --- TIME DECAY SECTION ---
+    st.markdown("---")
+    st.subheader("📉 Time Decay Comparison")
+    decay_data = []
+    for i in range(120): # Next 120 days
+        d = date.today() + timedelta(days=i)
+        
+        # A
+        if d < exp_date_a:
+            ta = max((exp_date_a - d).days / 365.0, 0.0001)
+            va = black_scholes(sim_price_a, strike_a, ta, risk_free_rate, implied_volatility)
+            decay_data.append({"Date": d, "Value": va, "Strategy": "Strategy A 🔵"})
+        
+        # B
+        if d < exp_date_b:
+            tb = max((exp_date_b - d).days / 365.0, 0.0001)
+            vb = black_scholes(sim_price_b, strike_b, tb, risk_free_rate, implied_volatility)
+            decay_data.append({"Date": d, "Value": vb, "Strategy": "Strategy B 🟠"})
+
+    decay_chart = alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(
+        x='Date:T', y='Value:Q', color='Strategy', tooltip=['Date', 'Value']
+    ).properties(height=350).interactive()
+    st.altair_chart(decay_chart, use_container_width=True)
+
+    # --- Q&A SECTION (TAB 1) ---
+    st.markdown("---")
+    st.markdown("### 💬 Ask about this Comparison")
+    
+    if "compare_ai_response" not in st.session_state: st.session_state["compare_ai_response"] = ""
+    comp_q = st.text_input("Ask a question about these scenarios...", key="comp_q")
+    
+    if st.button("Ask Gemini (Comparison)"):
+        if not api_key: st.error("Missing API Key")
+        else:
+            with st.spinner("Analyzing..."):
+                try:
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel('gemini-2.0-flash')
+                    ctx = f"""Comparing options. 
+                    A: Strike {strike_a}, Exp {exp_date_a}, Profit {profit_a}.
+                    B: Strike {strike_b}, Exp {exp_date_b}, Profit {profit_b}.
+                    User Q: {comp_q}"""
+                    response = model.generate_content(ctx)
+                    st.session_state["compare_ai_response"] = response.text
+                except Exception as e: st.error(f"Error: {e}")
+
+    if st.session_state["compare_ai_response"]:
+        st.info(st.session_state["compare_ai_response"])
+        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Gemini_Battle.txt")
+
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD (DSS BRESSERT) [NEW]
+#  TAB 2: MARKET DASHBOARD (DSS BRESSERT)
 # =========================================================
 with tab_dashboard:
     st.subheader("📊 DSS Bressert Scanner")
-    st.markdown("""
-    Monitor multiple stocks using the **Double Smoothed Stochastic (DSS)**.
-    * **Buy Zone (Green):** DSS < 20 (Oversold)
-    * **Sell Zone (Red):** DSS > 80 (Overbought)
-    """)
-
-    # Input for tickers
+    st.markdown("Scanner for **Double Smoothed Stochastic**. Green < 20 (Oversold), Red > 80 (Overbought).")
+    
     default_tickers = "MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU"
     ticker_input = st.text_input("Enter Tickers (comma separated)", value=default_tickers)
     
     if st.button("🔎 Scan Market"):
         tickers = [t.strip().upper() for t in ticker_input.split(",")]
         results = []
-
-        progress_bar = st.progress(0)
+        progress = st.progress(0)
         
         for i, tick in enumerate(tickers):
-            dss_val, price = calculate_dss_bressert(tick)
-            
-            if dss_val is not None:
+            dss, price = calculate_dss_bressert(tick)
+            if dss is not None:
                 status = "Neutral"
-                color = "gray"
-                if dss_val <= 20:
-                    status = "🟢 OVERSOLD (Buy Watch)"
-                    color = "green"
-                elif dss_val >= 80:
-                    status = "🔴 OVERBOUGHT (Sell Watch)"
-                    color = "red"
-                
-                results.append({
-                    "Ticker": tick,
-                    "Price": f"${price:,.2f}",
-                    "DSS Value": dss_val,
-                    "Status": status
-                })
-            progress_bar.progress((i + 1) / len(tickers))
-        
-        progress_bar.empty()
+                if dss <= 20: status = "🟢 OVERSOLD (Buy Watch)"
+                elif dss >= 80: status = "🔴 OVERBOUGHT (Sell Watch)"
+                results.append({"Ticker": tick, "Price": f"${price:,.2f}", "DSS": dss, "Status": status})
+            progress.progress((i + 1) / len(tickers))
+        progress.empty()
 
         if results:
             df_res = pd.DataFrame(results)
-            
-            # Styling function for the dataframe
             def color_status(val):
-                if "OVERSOLD" in val:
-                    return 'background-color: #d4edda; color: green; font-weight: bold'
-                elif "OVERBOUGHT" in val:
-                    return 'background-color: #f8d7da; color: red; font-weight: bold'
+                if "OVERSOLD" in val: return 'background-color: #d4edda; color: green; font-weight: bold'
+                elif "OVERBOUGHT" in val: return 'background-color: #f8d7da; color: red; font-weight: bold'
                 return ''
-
-            st.dataframe(
-                df_res.style.applymap(color_status, subset=['Status']),
-                use_container_width=True,
-                height=400
-            )
+            st.dataframe(df_res.style.applymap(color_status, subset=['Status']), use_container_width=True)
         else:
-            st.error("No data found. Check ticker symbols.")
+            st.error("No data found.")
 
 # =========================================================
-#  TAB 3: AI ANALYST (UNCHANGED)
+#  TAB 3: AI ANALYST (FULL RESTORED VERSION)
 # =========================================================
 with tab_ai:
     st.subheader("🤖 AI Chart Analysis")
     uploaded_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
     
-    if "ai_analysis_text" not in st.session_state:
-        st.session_state["ai_analysis_text"] = ""
+    if "ai_analysis_text" not in st.session_state: st.session_state["ai_analysis_text"] = ""
+    if "chart_q_response" not in st.session_state: st.session_state["chart_q_response"] = ""
 
     if uploaded_files:
         images = [Image.open(f) for f in uploaded_files]
         st.session_state["last_images"] = images
         
+        cols = st.columns(len(images))
+        for i, img in enumerate(images):
+            with cols[i]: st.image(img, caption=f"Chart {i+1}", use_container_width=True)
+
+        # ANALYZE BUTTON
         if st.button("✨ Analyze All Files"):
-            if not api_key:
-                st.error("Missing API Key")
+            if not api_key: st.error("Missing API Key")
             else:
-                with st.spinner("Gemini is analyzing..."):
+                with st.spinner("Analyzing..."):
                     try:
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
                         prompt = f"Analyze these {len(images)} images for {symbol}. Bullish or Bearish?"
                         response = model.generate_content([prompt] + images)
                         st.session_state["ai_analysis_text"] = response.text
-                        st.markdown("### 🧠 Gemini's Verdict:")
-                        st.write(response.text)
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
         
+        # ANALYSIS RESULT + DOWNLOAD
         if st.session_state["ai_analysis_text"]:
-             st.download_button("📥 Download Report", st.session_state["ai_analysis_text"], "AI_Report.txt")
+            st.markdown("### 🧠 Gemini's Verdict:")
+            st.write(st.session_state["ai_analysis_text"])
+            st.download_button("📥 Download Report", st.session_state["ai_analysis_text"], "AI_Report.txt")
+
+        # Q&A SECTION (TAB 3)
+        st.markdown("---")
+        chart_q = st.text_input("Ask a follow-up question...", key="chart_q")
+        
+        if st.button("Ask Gemini (Chart)"):
+            if "last_images" not in st.session_state: st.warning("Upload charts first.")
+            elif not api_key: st.error("Missing API Key")
+            else:
+                with st.spinner("Reviewing..."):
+                    try:
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        response = model.generate_content([chart_q] + st.session_state["last_images"])
+                        st.session_state["chart_q_response"] = response.text
+                    except Exception as e: st.error(f"Error: {e}")
+
+        # Q&A RESULT + DOWNLOAD
+        if st.session_state["chart_q_response"]:
+            st.info(st.session_state["chart_q_response"])
+            st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Gemini_Chart_QA.txt")
