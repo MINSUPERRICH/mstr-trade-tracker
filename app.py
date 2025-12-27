@@ -90,11 +90,16 @@ else:
 st.sidebar.markdown("---")
 symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
 current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
+strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
+expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
+purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
+entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
+contracts = st.sidebar.number_input("Contracts", value=1, step=1) # Restored from global
 
-# --- TABS (Updated with Tab 4) ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst", "📅 Catalyst Calendar"])
+# --- TABS ---
+tab_math, tab_dashboard, tab_ai, tab_catalyst = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst", "📅 Catalyst & IV"])
 
 # =========================================================
 #  TAB 1: STRATEGY BATTLE
@@ -106,10 +111,10 @@ with tab_math:
 
     with col_a:
         st.info("### 🔵 Strategy A")
-        strike_a = st.number_input("Strike ($)", value=157.50, step=0.50, key="str_a")
-        exp_date_a = st.date_input("Expiration", value=date(2026, 1, 9), key="exp_a")
-        entry_price_a = st.number_input("Entry Price", value=8.55, step=0.10, key="ent_a")
-        contracts_a = st.number_input("Contracts", value=1, step=1, key="cnt_a")
+        strike_a = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_a")
+        exp_date_a = st.date_input("Expiration", value=expiration_date, key="exp_a")
+        entry_price_a = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_a")
+        contracts_a = st.number_input("Contracts", value=contracts, step=1, key="cnt_a")
         st.markdown("---")
         sim_date_a = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="d_a", format="MMM DD")
         sim_price_a = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_a")
@@ -123,10 +128,10 @@ with tab_math:
 
     with col_b:
         st.warning("### 🟠 Strategy B")
-        strike_b = st.number_input("Strike ($)", value=157.50, step=0.50, key="str_b")
-        exp_date_b = st.date_input("Expiration", value=date(2026, 1, 9), key="exp_b")
-        entry_price_b = st.number_input("Entry Price", value=8.55, step=0.10, key="ent_b")
-        contracts_b = st.number_input("Contracts", value=1, step=1, key="cnt_b")
+        strike_b = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_b")
+        exp_date_b = st.date_input("Expiration", value=expiration_date, key="exp_b")
+        entry_price_b = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_b")
+        contracts_b = st.number_input("Contracts", value=contracts, step=1, key="cnt_b")
         st.markdown("---")
         sim_date_b = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="d_b", format="MMM DD")
         sim_price_b = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_b")
@@ -145,7 +150,7 @@ with tab_math:
     else: st.info("🤝 Draw")
 
     # Downloads & Heatmap
-    data_comp = {"Metric": ["Profit"], "Strategy A": [profit_a], "Strategy B": [profit_b]} # Simplified for brevity
+    data_comp = {"Metric": ["Profit"], "Strategy A": [profit_a], "Strategy B": [profit_b]}
     st.download_button("📥 Download Comparison", pd.DataFrame(data_comp).to_csv().encode('utf-8'), "Comp.csv", "text/csv")
     
     st.markdown("---")
@@ -283,11 +288,10 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST CALENDAR (NEW!)
+#  TAB 4: CATALYST & IV (UPDATED!)
 # =========================================================
 with tab_catalyst:
-    st.subheader("📅 Upcoming Catalyst Checker")
-    st.markdown("Check if there are major events (Earnings, News) coming up that could spike volatility.")
+    st.subheader("📅 Catalyst & Volatility Checker")
     
     cat_sym = st.text_input("Enter Symbol to Check:", value=symbol, key="cat_sym")
     
@@ -300,43 +304,97 @@ with tab_catalyst:
         try:
             cal = tick.calendar
             if cal is not None and not cal.empty:
-                # Calendar format varies by yfinance version, trying standard access
                 next_earnings = cal.iloc[0][0] if isinstance(cal, pd.DataFrame) else cal.get('Earnings Date', [None])[0]
-                
                 if next_earnings:
-                    # Format Date
                     earning_date = pd.to_datetime(next_earnings).date()
                     days_left = (earning_date - date.today()).days
-                    
-                    col_c1, col_c2 = st.columns(2)
-                    col_c1.metric("Next Earnings Date", earning_date.strftime('%Y-%m-%d'))
-                    col_c2.metric("Days Until Event", f"{days_left} Days")
-                    
-                    # VOLATILITY WARNING
-                    if 0 <= days_left <= 7:
-                        st.error(f"⚠️ **WARNING: HIGH VOLATILITY EVENT IMMINENT!** Earnings are in {days_left} days. Holding options through this is risky due to IV Crush.")
-                    elif days_left < 0:
-                         st.info("Earnings just passed. Volatility may be stabilizing.")
-                    else:
-                        st.success("✅ Safe Zone: Earnings are more than a week away.")
-                else:
-                    st.info("No upcoming earnings date found in calendar.")
-            else:
-                st.info("Earnings calendar data currently unavailable from source.")
-        except Exception as e:
-            st.warning(f"Could not retrieve earnings data: {e}")
+                    c1, c2 = st.columns(2)
+                    c1.metric("Next Earnings", earning_date.strftime('%Y-%m-%d'))
+                    c2.metric("Days Left", f"{days_left} Days")
+                    if 0 <= days_left <= 7: st.error("⚠️ **HIGH VOLATILITY WARNING:** Earnings Imminent!")
+                    elif days_left < 0: st.info("Earnings just passed.")
+                    else: st.success("✅ Earnings are safe distance away.")
+                else: st.info("No earnings date found.")
+            else: st.info("Earnings data unavailable.")
+        except: st.warning("Could not retrieve earnings.")
 
         # 2. NEWS CHECK
         st.markdown("---")
-        st.markdown("### 2. Recent News Catalysts")
+        st.markdown("### 2. Recent News")
         try:
             news = tick.news
             if news:
-                for n in news[:3]: # Show top 3
-                    with st.expander(f"📰 {n['title']}"):
-                        st.write(f"**Publisher:** {n['publisher']}")
-                        st.write(f"**Link:** [Read Article]({n['link']})")
+                for n in news[:3]:
+                    with st.expander(f"📰 {n['title']}"): st.write(f"Source: {n['publisher']} | [Link]({n['link']})")
+            else: st.info("No news found.")
+        except: st.info("News feed unavailable.")
+
+    # 3. IMPLIED VOLATILITY (IV) CHECKER - NEW!
+    st.markdown("---")
+    st.subheader("🔎 Option Implied Volatility (IV)")
+    st.write(f"Fetch the **REAL Market IV** for your contract: **Strike ${strike_price}**")
+    
+    if st.button("📊 Get Market IV"):
+        tick = yf.Ticker(cat_sym)
+        try:
+            # 1. Get All Expiration Dates
+            avail_dates = tick.options
+            
+            if not avail_dates:
+                st.error("No option chain data available for this symbol.")
             else:
-                st.info("No recent news found.")
-        except:
-            st.info("News feed unavailable.")
+                # 2. Find Closest Date
+                target_date_str = expiration_date.strftime('%Y-%m-%d')
+                
+                # Logic: Find exact match or closest date
+                if target_date_str in avail_dates:
+                    selected_date = target_date_str
+                    msg = f"Found exact expiration: {selected_date}"
+                else:
+                    # Find closest date
+                    target_dt = datetime.strptime(target_date_str, '%Y-%m-%d').date()
+                    closest_date = min(avail_dates, key=lambda x: abs(datetime.strptime(x, '%Y-%m-%d').date() - target_dt))
+                    selected_date = closest_date
+                    msg = f"⚠️ Target date {target_date_str} not found. Using closest: **{selected_date}**"
+
+                st.info(msg)
+                
+                # 3. Get Chain
+                opt_chain = tick.option_chain(selected_date)
+                calls = opt_chain.calls
+                
+                # 4. Find Strike
+                # Filter for the specific strike
+                specific_contract = calls[calls['strike'] == strike_price]
+                
+                if not specific_contract.empty:
+                    row = specific_contract.iloc[0]
+                    market_iv = row['impliedVolatility']
+                    volume = row['volume']
+                    oi = row['openInterest']
+                    last_price = row['lastPrice']
+                    
+                    # Display Results
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Market IV", f"{market_iv * 100:.2f}%", help="This is the real-time 'Fear' level.")
+                    m2.metric("Last Price", f"${last_price:.2f}")
+                    m3.metric("Volume", f"{int(volume) if not pd.isna(volume) else 0}")
+                    m4.metric("Open Interest", f"{int(oi) if not pd.isna(oi) else 0}")
+                    
+                    # Comparison Logic
+                    user_iv = implied_volatility # From sidebar
+                    diff_iv = (market_iv - user_iv) * 100
+                    
+                    st.write("---")
+                    if abs(diff_iv) < 5:
+                        st.success("✅ Your manual IV setting matches the market closely.")
+                    elif diff_iv > 0:
+                        st.warning(f"⚠️ Market IV is **{diff_iv:.1f}% higher** than your setting. Your options are actually **more expensive** than you think.")
+                    else:
+                        st.info(f"ℹ️ Market IV is **{abs(diff_iv):.1f}% lower** than your setting.")
+                        
+                else:
+                    st.warning(f"Strike Price ${strike_price} not found in {selected_date} chain. Available strikes: {list(calls['strike'].head(5))}...")
+                    
+        except Exception as e:
+            st.error(f"Error fetching option data: {e}")
