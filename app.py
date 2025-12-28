@@ -52,13 +52,9 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
     return price
 
 def calculate_delta(S, K, T, r, sigma, option_type='call'):
-    """Calculates the Delta of the option."""
-    if T <= 0: return 0
+    if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    if option_type == 'call':
-        return norm.cdf(d1)
-    else:
-        return norm.cdf(d1) - 1
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
@@ -90,7 +86,7 @@ def calculate_dss_data(ticker, period=10, ema_period=9):
 st.title("🚀 MSTR Option Command Center")
 
 # --- SIDEBAR ---
-st.sidebar.header("🌍 Market Conditions")
+st.sidebar.header("🌍 Global Settings")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
@@ -297,7 +293,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST & CHECKLIST (UPDATED!)
+#  TAB 4: CATALYST & CHECKLIST (UPDATED NEWS & EARNINGS)
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Catalyst & Pre-Trade Checklist")
@@ -309,46 +305,57 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # Earnings
+        # EARNINGS (Robust Fix)
         st.markdown("### 1. Earnings Calendar")
         try:
+            # Try multiple ways to access calendar (yfinance structure varies)
             cal = tick.calendar
-            if cal is not None and not cal.empty:
-                next_earnings = cal.iloc[0][0] if isinstance(cal, pd.DataFrame) else cal.get('Earnings Date', [None])[0]
-                if next_earnings:
-                    earning_date = pd.to_datetime(next_earnings).date()
-                    days_left = (earning_date - date.today()).days
-                    c1, c2 = st.columns(2)
-                    c1.metric("Next Earnings", earning_date.strftime('%Y-%m-%d'))
-                    c2.metric("Days Left", f"{days_left} Days")
-                    if 0 <= days_left <= 7: st.error("⚠️ **HIGH VOLATILITY WARNING:** Earnings Imminent!")
-                    elif days_left < 0: st.info("Earnings just passed.")
-                    else: st.success("✅ Earnings are safe distance away.")
-                else: st.info("No earnings date found.")
-            else: st.info("Earnings data unavailable.")
-        except: st.warning("Could not retrieve earnings.")
+            next_earn = None
+            
+            if isinstance(cal, dict) and 'Earnings Date' in cal:
+                next_earn = cal['Earnings Date'][0]
+            elif isinstance(cal, pd.DataFrame) and not cal.empty:
+                 next_earn = cal.iloc[0][0]
+            
+            if next_earn:
+                earning_date = pd.to_datetime(next_earn).date()
+                days_left = (earning_date - date.today()).days
+                c1, c2 = st.columns(2)
+                c1.metric("Next Earnings", earning_date.strftime('%Y-%m-%d'))
+                c2.metric("Days Left", f"{days_left} Days")
+                if 0 <= days_left <= 7: st.error("⚠️ **HIGH VOLATILITY WARNING:** Earnings Imminent!")
+                elif days_left < 0: st.info("Earnings just passed.")
+                else: st.success("✅ Earnings are safe distance away.")
+            else:
+                st.info("No upcoming earnings date found.")
+        except Exception as e: st.warning(f"Could not retrieve earnings: {e}")
 
-        # News
+        # NEWS (Robust Fix - Unlimited Items + Dates)
         st.markdown("---")
-        st.markdown("### 2. Recent News")
+        st.markdown("### 2. News Feed")
         try:
             news = tick.news
             if news:
-                for n in news[:3]:
-                    with st.expander(f"📰 {n['title']}"): st.write(f"Source: {n['publisher']} | [Link]({n['link']})")
+                # Iterate through ALL available news items
+                for n in news:
+                    # Convert timestamp to readable date
+                    pub_time = n.get('providerPublishTime', 0)
+                    pub_date_str = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d %H:%M')
+                    
+                    with st.expander(f"📰 {pub_date_str} | {n['title']}"): 
+                        st.write(f"**Source:** {n['publisher']}")
+                        st.write(f"[Read Article]({n['link']})")
             else: st.info("No news found.")
-        except: st.info("News feed unavailable.")
+        except Exception as e: st.info(f"News feed unavailable: {e}")
 
     # 2. THE 6-POINT CHECKLIST
     st.markdown("---")
     st.subheader("✅ The 6-Point Trade Checklist")
-    st.write("Evaluate your setup before entry. Data fetches live.")
     
     if st.button("🚀 Run Checklist"):
         tick = yf.Ticker(cat_sym)
         checklist_data = []
         
-        # Fetch Data
         try:
             hist = tick.history(period="1mo")
             current_price = hist['Close'].iloc[-1]
@@ -366,10 +373,8 @@ with tab_catalyst:
             status_vol = "✅ Pass" if today_vol > avg_vol else "⚠️ Low"
             checklist_data.append({"Check": "2. Volume Activity", "Value": f"{today_vol/1000000:.1f}M", "Result": status_vol, "Note": "Is Vol > Avg?"})
             
-            # 3. IV Fear Check (Simple Trend)
-            # Fetch Option Chain for IV
+            # 3. IV Check
             try:
-                # Find closest date
                 avail_dates = tick.options
                 if avail_dates:
                     target_dt = datetime.strptime(expiration_date.strftime('%Y-%m-%d'), '%Y-%m-%d').date()
@@ -382,30 +387,22 @@ with tab_catalyst:
                         opt_vol = contract.iloc[0]['volume']
                         opt_oi = contract.iloc[0]['openInterest']
                         
-                        # Rule of 16 (Daily Move)
                         daily_move = current_price * (iv / 16)
-                        checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually if needed."})
-                        
-                        # 4. Rule of 16 Reality Check
+                        checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually."})
                         checklist_data.append({"Check": "4. Rule of 16 (Exp. Move)", "Value": f"${daily_move:.2f}", "Result": "ℹ️ Info", "Note": "Is Target < This?"})
                         
-                        # 5. Vol vs OI
                         status_voi = "✅ Pass" if opt_vol > opt_oi else "⚠️ Low Vol"
                         checklist_data.append({"Check": "5. Vol vs OI", "Value": f"{opt_vol} / {opt_oi}", "Result": status_voi, "Note": "Is Vol > OI?"})
                         
-                        # 6. Delta Check
-                        # Calculate Delta
                         t_years = max((datetime.strptime(closest_date, '%Y-%m-%d').date() - date.today()).days / 365.0, 0.0001)
                         delta = calculate_delta(current_price, strike_price, t_years, risk_free_rate, iv)
                         status_delta = "✅ Pass" if delta >= 0.30 else "⚠️ Low Delta"
                         checklist_data.append({"Check": "6. Delta Check", "Value": f"{delta:.2f}", "Result": status_delta, "Note": "Is Delta > 0.30?"})
-                        
                     else:
                         st.error("Strike not found for checklist.")
             except Exception as e:
                 checklist_data.append({"Check": "Option Data", "Value": "Error", "Result": "❌ Fail", "Note": str(e)})
 
-            # Display Table
             df_check = pd.DataFrame(checklist_data)
             def highlight_res(val):
                 if "Pass" in val: return 'color: green; font-weight: bold'
