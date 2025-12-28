@@ -125,7 +125,7 @@ if ticker:
 
     st.markdown("---")
 
-    # --- THE 6 TABS ---
+    # --- THE 7 TABS ---
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "1. Price (Gap)", 
         "2. Volume", 
@@ -199,24 +199,35 @@ if ticker:
 
     # ---------------- TAB 5: VOL vs OI ----------------
     with tab5:
-        st.header("Trend Check (New Money)")
+        st.header("Trend Check (New Money Flow)")
+        st.markdown("This checks if traders are entering new positions (Bullish/Aggressive) or just closing old ones.")
+
         col_x, col_y = st.columns(2)
-        col_x.metric("Today's Volume", f"{contract_volume:.0f}")
-        col_y.metric("Open Interest (Yesterday)", f"{contract_oi:.0f}")
+        with col_x:
+            st.metric("Today's Volume", f"{contract_volume:,.0f}", help="Total contracts traded today")
+        with col_y:
+            st.metric("Open Interest (OI)", f"{contract_oi:,.0f}", help="Total contracts held overnight")
         
+        # Calculate Ratio
         if contract_oi == 0:
             ratio = 0
+            st.write("Open Interest is 0. This is a brand new strike or illiquid.")
         else:
             ratio = contract_volume / contract_oi
             
-        st.write(f"**Vol / OI Ratio:** {ratio:.2f}")
-        
+        st.markdown("---")
+        st.metric("Vol / OI Ratio", f"{ratio:.2f}x")
+
+        # Logic for Pass/Fail
         if contract_volume > contract_oi:
-            st.success("✅ **PASS (Breakout Signal):** Volume > Open Interest. New money is flooding in aggressively!")
+            st.markdown("### <span class='pass'>✅ PASS (Aggressive Breakout)</span>", unsafe_allow_html=True)
+            st.write("Volume is HIGHER than Open Interest. This means **New Money** is flooding into this contract. This is a very strong breakout signal.")
         elif ratio > 0.5:
-             st.warning("⚠️ **WATCH:** Moderate activity.")
+             st.markdown("### <span class='warning'>⚠️ WATCH (Moderate Activity)</span>", unsafe_allow_html=True)
+             st.write("Volume is decent (more than half of OI), but not explosive yet. Watch for volume spikes.")
         else:
-            st.error("❌ **FAIL:** Low Volume. Mostly old traders passing contracts around.")
+            st.markdown("### <span class='fail'>❌ FAIL (Low Conviction)</span>", unsafe_allow_html=True)
+            st.write("Volume is low compared to Open Interest. Traders are likely just passing existing contracts around. No aggressive buying detected.")
 
     # ---------------- TAB 6: DELTA (ODDS) ----------------
     with tab6:
