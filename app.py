@@ -293,7 +293,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST & CHECKLIST (ROBUST FIX)
+#  TAB 4: CATALYST & CHECKLIST (STRICT FILTER FIX)
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Catalyst & Pre-Trade Checklist")
@@ -308,25 +308,19 @@ with tab_catalyst:
         # EARNINGS (Robust Fix)
         st.markdown("### 1. Earnings Calendar")
         try:
-            # Try Method 1: Calendar
             cal = tick.calendar
             next_earn = None
-            
-            # Detect data structure (Dict or DataFrame)
             if isinstance(cal, dict) and 'Earnings Date' in cal:
                 next_earn = cal['Earnings Date'][0]
             elif isinstance(cal, pd.DataFrame) and not cal.empty:
                  next_earn = cal.iloc[0][0]
             
-            # If Method 1 failed, Try Method 2: get_earnings_dates()
             if not next_earn:
                 try:
                     dates = tick.get_earnings_dates(limit=2)
                     if dates is not None and not dates.empty:
-                        # Find first future date
                         future_dates = dates.index[dates.index > pd.Timestamp.now()]
-                        if not future_dates.empty:
-                            next_earn = future_dates[0]
+                        if not future_dates.empty: next_earn = future_dates[0]
                 except: pass
 
             if next_earn:
@@ -342,7 +336,7 @@ with tab_catalyst:
                 st.info("No upcoming earnings date found in calendar.")
         except Exception as e: st.warning(f"Earnings data currently unavailable: {e}")
 
-        # NEWS (Robust Fix for Missing Keys)
+        # NEWS (Strict Filter Fix)
         st.markdown("---")
         st.markdown("### 2. News Feed")
         try:
@@ -350,23 +344,39 @@ with tab_catalyst:
             if not news:
                 st.info("No news items found.")
             else:
-                # Iterate through ALL available news without crashing
+                valid_count = 0
                 for n in news:
-                    # Use .get() to avoid KeyError if 'title' is missing
-                    title = n.get('title', 'No Title')
-                    pub = n.get('publisher', 'Unknown Source')
+                    # 1. Check if 'n' is a dict
+                    if not isinstance(n, dict): continue
+                    
+                    # 2. Get Data Safely
+                    title = n.get('title', '')
+                    pub = n.get('publisher', 'Unknown')
                     link = n.get('link', '#')
-                    
-                    # Convert timestamp safely
                     ts = n.get('providerPublishTime', 0)
-                    try:
-                        date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
-                    except:
-                        date_str = "Unknown Date"
                     
+                    # 3. STRICT FILTER: Skip if No Title or 1970 Date
+                    if not title or title == "No Title" or ts == 0:
+                        continue
+
+                    # 4. Format Date
+                    try:
+                        date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
+                    except:
+                        date_str = "Recent"
+
+                    # 5. Render
                     with st.expander(f"📰 {date_str} | {title}"): 
                         st.write(f"**Source:** {pub}")
-                        st.write(f"[Read Article]({link})")
+                        if link and link != '#':
+                            st.write(f"[Read Article]({link})")
+                        else:
+                            st.write("*(No Link Available)*")
+                    valid_count += 1
+                
+                if valid_count == 0:
+                    st.info("No valid news articles found (Feed returned empty or broken data).")
+
         except Exception as e: st.info(f"News feed unavailable from source.")
 
     # 2. THE 6-POINT CHECKLIST
