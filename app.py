@@ -1,14 +1,22 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
+import altair as alt
+from datetime import date, timedelta, datetime
 from scipy.stats import norm
-from datetime import datetime, timedelta
+from PIL import Image
+import io
+import google.generativeai as genai
+import yfinance as yf
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Options Command Center", layout="wide", page_icon="🚀")
+st.set_page_config(
+    page_title="MSTR Command Center",
+    page_icon="🚀",
+    layout="wide"
+)
 
-# --- CUSTOM CSS FOR "DASHBOARD" FEEL ---
+# --- CUSTOM CSS (From your request) ---
 st.markdown("""
 <style>
     .metric-card {
@@ -24,248 +32,227 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
+# --- SECURITY SYSTEM ---
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
 
-def get_stock_data(ticker_symbol):
-    """Fetches real-time stock info and history."""
-    stock = yf.Ticker(ticker_symbol)
-    history = stock.history(period="5d")  # Get recent days for gap check
-    info = stock.info
-    return stock, history, info
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.title("🔒 Locked")
+    st.text_input("Enter Password:", type="password", on_change=password_entered, key="password")
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("😕 Password incorrect")
+    return False
+
+if not check_password():
+    st.stop()
+
+# =========================================================
+#  HELPER FUNCTIONS (Math & Data)
+# =========================================================
+def black_scholes(S, K, T, r, sigma, option_type='call'):
+    if T <= 0:
+        return max(0, S - K) if option_type == 'call' else max(0, K - S)
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    if option_type == 'call':
+        price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    else:
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+    return price
 
 def calculate_delta(S, K, T, r, sigma, option_type='call'):
-    """
-    Calculates Option Delta using Black-Scholes formula.
-    S: Stock Price, K: Strike, T: Time to Expiration (years),
-    r: Risk-free rate, sigma: Implied Volatility
-    """
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    if option_type == 'call':
-        return norm.cdf(d1)
-    else:
-        return norm.cdf(d1) - 1
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_max_pain(options_chain):
     """Calculates the strike price where option writers lose the least money."""
-    # This is a simplified estimation summing cash value of all expiring options
     strikes = options_chain['strike'].unique()
     max_pain_data = []
-
     for strike in strikes:
-        # Assume stock expires at this strike
-        # Value of Calls = max(0, Strike - K) * OI
         calls_at_strike = options_chain[options_chain['type'] == 'call']
         puts_at_strike = options_chain[options_chain['type'] == 'put']
-        
         call_loss = calls_at_strike.apply(lambda x: max(0, strike - x['strike']) * x['openInterest'], axis=1).sum()
         put_loss = puts_at_strike.apply(lambda x: max(0, x['strike'] - strike) * x['openInterest'], axis=1).sum()
-        
         max_pain_data.append({'strike': strike, 'total_loss': call_loss + put_loss})
-    
     df_pain = pd.DataFrame(max_pain_data)
     if df_pain.empty: return 0
     return df_pain.loc[df_pain['total_loss'].idxmin()]['strike']
 
-# --- SIDEBAR INPUTS ---
-st.sidebar.header("⚙️ Trade Settings")
-ticker = st.sidebar.text_input("Ticker Symbol", value="NKE").upper()
-
-strike_price = st.sidebar.number_input("Strike Price ($)", value=61.0)
-target_profit_move = st.sidebar.number_input("Target Stock Move ($)", value=2.0, help="How many dollars do you need the stock to move today?")
-
-# --- MAIN APP LOGIC ---
-
-if ticker:
+def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
-        # 1. FETCH DATA
-        with st.spinner(f'Fetching data for {ticker}...'):
-            stock, history, info = get_stock_data(ticker)
-            current_price = info.get('currentPrice', history['Close'].iloc[-1])
-            prev_close = info.get('previousClose', history['Close'].iloc[-2])
-            
-            # Get Options Dates
-            expirations = stock.options
-            if not expirations:
-                st.error("No options data found.")
-                st.stop()
-                
-            selected_date = st.sidebar.selectbox("Expiration Date", expirations)
-            
-            # Get Option Chain for selected date
-            opt_chain = stock.option_chain(selected_date)
-            calls = opt_chain.calls
-            calls['type'] = 'call'
-            puts = opt_chain.puts
-            puts['type'] = 'put'
-            full_chain = pd.concat([calls, puts])
-            
-            # Find specific contract user is interested in
-            # Look for the call closest to the strike input
-            specific_contract = calls.iloc[(calls['strike'] - strike_price).abs().argsort()[:1]]
-            if specific_contract.empty:
-                st.warning("Strike price not found in chain.")
-                st.stop()
-            
-            contract_data = specific_contract.iloc[0]
-            contract_iv = contract_data['impliedVolatility']
-            contract_volume = contract_data['volume'] if not np.isnan(contract_data['volume']) else 0
-            contract_oi = contract_data['openInterest'] if not np.isnan(contract_data['openInterest']) else 0
-            
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        st.stop()
+        df = yf.download(ticker, period="6mo", progress=False)
+        if len(df) < period + ema_period: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        high, low, close = df['High'], df['Low'], df['Close']
+        lowest_low = low.rolling(window=period).min()
+        highest_high = high.rolling(window=period).max()
+        stoch_raw = (close - lowest_low) / (highest_high - lowest_low) * 100
+        xPreCalc = stoch_raw.ewm(span=ema_period, adjust=False).mean()
+        lowest_smooth = xPreCalc.rolling(window=period).min()
+        highest_smooth = xPreCalc.rolling(window=period).max()
+        denominator = (highest_smooth - lowest_smooth).replace(0, 1)
+        stoch_smooth = (xPreCalc - lowest_smooth) / denominator * 100
+        dss = stoch_smooth.ewm(span=ema_period, adjust=False).mean()
+        df['DSS'] = dss
+        df['Signal'] = df['DSS'].ewm(span=4, adjust=False).mean()
+        return df[['Close', 'DSS', 'Signal']].dropna().reset_index()
+    except: return None
 
-    # --- DASHBOARD HEADER ---
-    st.title(f"📊 {ticker} Trade Command Center")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Current Price", f"${current_price:.2f}", f"{current_price - prev_close:.2f}")
-    col2.metric("Target Strike", f"${strike_price:.2f}")
-    col3.metric("Selected Expiration", selected_date)
+# =========================================================
+#  APP LAYOUT
+# =========================================================
+st.title("🚀 MSTR Option Command Center")
 
-    st.markdown("---")
+# --- GLOBAL SIDEBAR ---
+st.sidebar.header("🌍 Global Settings")
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+else:
+    api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
 
-    # --- THE 7 TABS ---
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "1. Price (Gap)", 
-        "2. Volume", 
-        "3. IV (Fear)", 
-        "4. Rule of 16", 
-        "5. Vol vs OI", 
-        "6. Delta (Odds)",
-        "💀 Max Pain"
-    ])
+st.sidebar.markdown("---")
+symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
+current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
+strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
+expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
+purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
+entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
+implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
+risk_free_rate = 0.045
+contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
-    # ---------------- TAB 1: PRICE GAP ----------------
-    with tab1:
-        st.header("Price Gap Check")
-        gap = current_price - prev_close
-        gap_percent = (gap / prev_close) * 100
-        
-        st.metric("Overnight Gap", f"${gap:.2f}", f"{gap_percent:.2f}%")
-        
-        if abs(gap) < 0.50:
-            st.success("✅ PASSED: Gap is small (< $0.50). 'Rule of 16' is valid.")
-        elif gap < -1.00:
-            st.error("⚠️ WARNING: Big Gap Down. Watch your Stop Loss ($0.41) immediately!")
-        else:
-            st.info("ℹ️ NOTE: Significant Gap. Volatility is high.")
+# --- 5 TABS ---
+tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_deep_dive = st.tabs([
+    "⚔️ Strategy Battle", 
+    "📊 Market Dashboard", 
+    "📸 Chart Analyst", 
+    "📅 Catalyst & Checklist",
+    "🩻 Deep Dive Validator"
+])
 
-    # ---------------- TAB 2: VOLUME ----------------
-    with tab2:
-        st.header("Stock Volume Check")
-        avg_vol = info.get('averageVolume', 0)
-        curr_vol = info.get('volume', 0) # Note: 'volume' in info is often delayed
-        
-        st.write(f"**Average Daily Volume:** {avg_vol:,}")
-        if curr_vol > 0:
-            st.write(f"**Current Volume:** {curr_vol:,}")
-        else:
-            st.write("*(Market might be closed or pre-market volume not available via free API)*")
-            
-        st.info("💡 Look for 'Heavy Volume' at 9:35 AM to confirm the move is real.")
+# =========================================================
+#  TAB 1: STRATEGY BATTLE (Preserved)
+# =========================================================
+with tab_math:
+    st.subheader(f"⚖️ Compare Strategies")
+    if st.button("🔄 Reset Scenarios"): st.rerun()
+    col_a, col_b = st.columns(2)
 
-    # ---------------- TAB 3: IV (FEAR) ----------------
-    with tab3:
-        st.header("Implied Volatility (IV) Check")
-        iv_percent = contract_iv * 100
-        st.metric("IV for your Strike", f"{iv_percent:.2f}%")
-        
-        if iv_percent < 20:
-            st.write("🧊 **Low IV:** Options are cheap, but stock might be boring.")
-        elif iv_percent > 50:
-            st.warning("🔥 **High IV:** Options are expensive. Be careful of 'IV Crush'.")
-        else:
-            st.success("✅ **Normal IV:** Good balance of risk/reward.")
-
-    # ---------------- TAB 4: RULE OF 16 ----------------
-    with tab4:
-        st.header("The Reality Check (Rule of 16)")
-        
-        daily_move_pct = iv_percent / 16
-        daily_move_dollar = current_price * (daily_move_pct / 100)
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric("Expected Daily Move %", f"{daily_move_pct:.2f}%")
-            st.metric("Expected Daily Move $", f"${daily_move_dollar:.2f}")
-        
-        with col_b:
-            st.write(f"**Your Target Move:** ${target_profit_move:.2f}")
-            if target_profit_move > daily_move_dollar:
-                st.error(f"❌ **FAIL:** You need ${target_profit_move}, but market only expects ${daily_move_dollar:.2f}. This is statistically unlikely today.")
-            else:
-                st.success(f"✅ **PASS:** Your target (${target_profit_move}) is within the expected range (${daily_move_dollar:.2f}).")
-
-    # ---------------- TAB 5: VOL vs OI ----------------
-    with tab5:
-        st.header("Trend Check (New Money Flow)")
-        st.markdown("This checks if traders are entering new positions (Bullish/Aggressive) or just closing old ones.")
-
-        col_x, col_y = st.columns(2)
-        with col_x:
-            st.metric("Today's Volume", f"{contract_volume:,.0f}", help="Total contracts traded today")
-        with col_y:
-            st.metric("Open Interest (OI)", f"{contract_oi:,.0f}", help="Total contracts held overnight")
-        
-        # Calculate Ratio
-        if contract_oi == 0:
-            ratio = 0
-            st.write("Open Interest is 0. This is a brand new strike or illiquid.")
-        else:
-            ratio = contract_volume / contract_oi
-            
+    with col_a:
+        st.info("### 🔵 Strategy A")
+        strike_a = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_a")
+        exp_date_a = st.date_input("Expiration", value=expiration_date, key="exp_a")
+        entry_price_a = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_a")
+        contracts_a = st.number_input("Contracts", value=contracts, step=1, key="cnt_a")
         st.markdown("---")
-        st.metric("Vol / OI Ratio", f"{ratio:.2f}x")
+        sim_date_a = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="d_a", format="MMM DD")
+        sim_price_a = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_a")
+        
+        days_a = (exp_date_a - sim_date_a).days
+        years_a = max(days_a / 365.0, 0.0001)
+        opt_price_a = black_scholes(sim_price_a, strike_a, years_a, risk_free_rate, implied_volatility)
+        profit_a = (opt_price_a * 100 * contracts_a) - (entry_price_a * 100 * contracts_a)
+        st.metric("Est. Value", f"${opt_price_a:.2f}")
+        st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
 
-        # Logic for Pass/Fail
-        if contract_volume > contract_oi:
-            st.markdown("### <span class='pass'>✅ PASS (Aggressive Breakout)</span>", unsafe_allow_html=True)
-            st.write("Volume is HIGHER than Open Interest. This means **New Money** is flooding into this contract. This is a very strong breakout signal.")
-        elif ratio > 0.5:
-             st.markdown("### <span class='warning'>⚠️ WATCH (Moderate Activity)</span>", unsafe_allow_html=True)
-             st.write("Volume is decent (more than half of OI), but not explosive yet. Watch for volume spikes.")
-        else:
-            st.markdown("### <span class='fail'>❌ FAIL (Low Conviction)</span>", unsafe_allow_html=True)
-            st.write("Volume is low compared to Open Interest. Traders are likely just passing existing contracts around. No aggressive buying detected.")
+    with col_b:
+        st.warning("### 🟠 Strategy B")
+        strike_b = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_b")
+        exp_date_b = st.date_input("Expiration", value=expiration_date, key="exp_b")
+        entry_price_b = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_b")
+        contracts_b = st.number_input("Contracts", value=contracts, step=1, key="cnt_b")
+        st.markdown("---")
+        sim_date_b = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="d_b", format="MMM DD")
+        sim_price_b = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_b")
+        
+        days_b = (exp_date_b - sim_date_b).days
+        years_b = max(days_b / 365.0, 0.0001)
+        opt_price_b = black_scholes(sim_price_b, strike_b, years_b, risk_free_rate, implied_volatility)
+        profit_b = (opt_price_b * 100 * contracts_b) - (entry_price_b * 100 * contracts_b)
+        st.metric("Est. Value", f"${opt_price_b:.2f}")
+        st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
 
-    # ---------------- TAB 6: DELTA (ODDS) ----------------
-    with tab6:
-        st.header("Odds Check (Delta)")
-        
-        # Calculate Time to Expiry in Years
-        expiry_dt = datetime.strptime(selected_date, "%Y-%m-%d")
-        days_to_expiry = (expiry_dt - datetime.now()).days
-        if days_to_expiry < 0: days_to_expiry = 0
-        T = days_to_expiry / 365.0
-        
-        # Risk free rate approx 4.5%
-        delta = calculate_delta(current_price, strike_price, T, 0.045, contract_iv, 'call')
-        
-        st.metric("Delta (Win Probability)", f"{delta:.2f}")
-        
-        if delta < 0.30:
-            st.error(f"❌ **High Risk:** Only {delta*100:.0f}% probability of expiring ITM.")
-        elif delta > 0.70:
-            st.success(f"✅ **Safe (Deep ITM):** {delta*100:.0f}% probability, but expensive.")
-        else:
-            st.success(f"✅ **Good Balance:** {delta*100:.0f}% probability. Standard swing trade.")
+    st.write("---")
+    diff = profit_a - profit_b
+    if diff > 0: st.success(f"🏆 **Strategy A Wins!** (+${diff:,.2f})")
+    elif diff < 0: st.warning(f"🏆 **Strategy B Wins!** (+${abs(diff):,.2f})")
+    else: st.info("🤝 Draw")
 
-    # ---------------- TAB 7: MAX PAIN ----------------
-    with tab7:
-        st.header("💀 Max Pain (The Magnet)")
-        st.write("Calculating Max Pain for this expiration... (this assumes simple cash value)")
-        
-        pain_price = calculate_max_pain(full_chain)
-        
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("Current Stock Price", f"${current_price:.2f}")
-        col_m2.metric("Max Pain Price", f"${pain_price:.2f}")
-        
-        diff = current_price - pain_price
-        if abs(diff) < 1.00:
-            st.warning("🧲 **MAGNET EFFECT:** Stock is pinned near Max Pain.")
-        elif current_price > pain_price:
-            st.info(f"📉 **Drag Risk:** Stock is ${diff:.2f} ABOVE Max Pain. Market Makers might want it lower.")
+    # Downloads & Heatmap
+    data_comp = {"Metric": ["Profit"], "Strategy A": [profit_a], "Strategy B": [profit_b]}
+    st.download_button("📥 Download Comparison", pd.DataFrame(data_comp).to_csv().encode('utf-8'), "Comp.csv", "text/csv")
+    
+    st.markdown("---")
+    st.subheader("🗺️ Profit Heatmap")
+    map_choice = st.radio("Show Map for:", ["Strategy A 🔵", "Strategy B 🟠"], horizontal=True)
+    if map_choice == "Strategy A 🔵": h_st, h_ex, h_en, h_cn = strike_a, exp_date_a, entry_price_a, contracts_a
+    else: h_st, h_ex, h_en, h_cn = strike_b, exp_date_b, entry_price_b, contracts_b
+    
+    prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
+    future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
+    heatmap_data = []
+    for d in future_dates:
+        t_years = max((h_ex - d).days / 365.0, 0.0001)
+        for p in prices:
+            opt = black_scholes(p, h_st, t_years, risk_free_rate, implied_volatility)
+            heatmap_data.append({"Date": d.strftime('%Y-%m-%d'), "Stock Price": round(p, 2), "Profit": round((opt - h_en)*100*h_cn, 2)})
+            
+    df_hm = pd.DataFrame(heatmap_data)
+    c = alt.Chart(df_hm).mark_rect().encode(x='Date:O', y='Stock Price:O', color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), tooltip=['Date','Stock Price','Profit']).properties(height=350)
+    st.altair_chart(c, use_container_width=True)
+    st.download_button("📥 Download Heatmap", df_hm.to_csv().encode('utf-8'), "Heatmap.csv", "text/csv")
+    
+    # Time Decay
+    st.markdown("---")
+    st.subheader("📉 Time Decay Comparison")
+    decay_data = []
+    for i in range(120):
+        d = date.today() + timedelta(days=i)
+        if d < exp_date_a:
+            ta = max((exp_date_a - d).days/365.0, 0.0001)
+            decay_data.append({"Date": d, "Value": black_scholes(sim_price_a, strike_a, ta, risk_free_rate, implied_volatility), "Strategy": "Strategy A 🔵"})
+        if d < exp_date_b:
+            tb = max((exp_date_b - d).days/365.0, 0.0001)
+            decay_data.append({"Date": d, "Value": black_scholes(sim_price_b, strike_b, tb, risk_free_rate, implied_volatility), "Strategy": "Strategy B 🟠"})
+    st.altair_chart(alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(x='Date:T', y='Value:Q', color='Strategy').properties(height=350).interactive(), use_container_width=True)
+
+    # Q&A
+    st.markdown("---")
+    if "compare_ai_response" not in st.session_state: st.session_state["compare_ai_response"] = ""
+    comp_q = st.text_input("Ask a question about comparisons...", key="comp_q")
+    if st.button("Ask Gemini (Comparison)"):
+        if not api_key: st.error("Missing API Key")
         else:
-            st.info(f"📈 **Lift Potential:** Stock is ${abs(diff):.2f} BELOW Max Pain. Market Makers might want it higher.")
+            try:
+                genai.configure(api_key=api_key); model = genai.GenerativeModel('gemini-2.0-flash')
+                st.session_state["compare_ai_response"] = model.generate_content(f"Compare Option A (Profit {profit_a}) vs B (Profit {profit_b}). User Q: {comp_q}").text
+            except Exception as e: st.error(str(e))
+    if st.session_state["compare_ai_response"]:
+        st.info(st.session_state["compare_ai_response"])
+        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
+
+# =========================================================
+#  TAB 2: MARKET DASHBOARD (Preserved)
+# =========================================================
+with tab_dashboard:
+    st.subheader("📊 DSS Bressert Scanner")
+    col_in1, col_in2 = st.columns(2)
+    with col_in1: text_tickers = st.text_input("Manual Tickers (comma separated)", value="MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU")
+    with col_in2: uploaded_file = st.file_uploader("📂 Upload Excel List", type=['xlsx', 'xls'])
+
+    if "scan_results" not in st.session_state: st.session_state["scan_results"] = []
+    
+    if st.button("🔎 Scan Market"):
+        final_tickers = [t.strip().upper() for t in text_tickers.split(",") if t.strip()]
+        if uploaded_file:
+            try:
+                df_up = pd.read_excel(uploaded_file)
+                final_tickers.
