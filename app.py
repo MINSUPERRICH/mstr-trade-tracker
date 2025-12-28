@@ -431,7 +431,7 @@ with tab_catalyst:
                 
                 vol = hist['Volume'].iloc[-1]
                 avg_vol = hist['Volume'].mean()
-                checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1M:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
+                checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1000000:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
                 
                 try:
                     dates = tick.options
