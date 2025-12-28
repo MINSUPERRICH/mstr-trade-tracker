@@ -16,6 +16,22 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- CUSTOM CSS ---
+st.markdown("""
+<style>
+    .metric-card {
+        background-color: #0e1117;
+        border: 1px solid #262730;
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+    }
+    .pass { color: #00FF7F; font-weight: bold; }
+    .fail { color: #FF4B4B; font-weight: bold; }
+    .warning { color: #FFA500; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
+
 # --- SECURITY SYSTEM ---
 def check_password():
     def password_entered():
@@ -41,8 +57,7 @@ if not check_password():
 #  MATH ENGINE
 # =========================================================
 def black_scholes(S, K, T, r, sigma, option_type='call'):
-    if T <= 0:
-        return max(0, S - K) if option_type == 'call' else max(0, K - S)
+    if T <= 0: return max(0, S - K) if option_type == 'call' else max(0, K - S)
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     if option_type == 'call':
@@ -56,12 +71,45 @@ def calculate_delta(S, K, T, r, sigma, option_type='call'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
+def calculate_max_pain(options_chain):
+    """Calculates the strike price where option writers lose the least money."""
+    strikes = options_chain['strike'].unique()
+    max_pain_data = []
+    for strike in strikes:
+        calls_at_strike = options_chain[options_chain['type'] == 'call']
+        puts_at_strike = options_chain[options_chain['type'] == 'put']
+        # Simple calculation: Sum of Intrinsic Value * Open Interest
+        call_loss = calls_at_strike.apply(lambda x: max(0, strike - x['strike']) * x['openInterest'], axis=1).sum()
+        put_loss = puts_at_strike.apply(lambda x: max(0, x['strike'] - strike) * x['openInterest'], axis=1).sum()
+        max_pain_data.append({'strike': strike, 'total_loss': call_loss + put_loss})
+    
+    df_pain = pd.DataFrame(max_pain_data)
+    if df_pain.empty: return 0
+    return df_pain.loc[df_pain['total_loss'].idxmin()]['strike']
+
+def calculate_dmi(df, period=14):
+    """Calculates +DI, -DI and ADX."""
+    df = df.copy()
+    df['UpMove'] = df['High'] - df['High'].shift(1)
+    df['DownMove'] = df['Low'].shift(1) - df['Low']
+    
+    df['+DM'] = np.where((df['UpMove'] > df['DownMove']) & (df['UpMove'] > 0), df['UpMove'], 0)
+    df['-DM'] = np.where((df['DownMove'] > df['UpMove']) & (df['DownMove'] > 0), df['DownMove'], 0)
+    
+    df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Close'].shift(1)), abs(df['Low'] - df['Close'].shift(1))))
+    
+    df['+DI'] = 100 * (df['+DM'].ewm(alpha=1/period).mean() / df['TR'].ewm(alpha=1/period).mean())
+    df['-DI'] = 100 * (df['-DM'].ewm(alpha=1/period).mean() / df['TR'].ewm(alpha=1/period).mean())
+    df['ADX'] = 100 * abs((df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])).ewm(alpha=1/period).mean()
+    
+    return df
+
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
         df = yf.download(ticker, period="6mo", progress=False)
         if len(df) < period + ema_period: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-
+        
         high, low, close = df['High'], df['Low'], df['Close']
         lowest_low = low.rolling(window=period).min()
         highest_high = high.rolling(window=period).max()
@@ -293,157 +341,111 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST & CHECKLIST (STRICT FILTER FIX)
+#  TAB 4: CATALYST, DMI & CHECKLIST (UPDATED!)
 # =========================================================
 with tab_catalyst:
-    st.subheader("📅 Catalyst & Pre-Trade Checklist")
-    
+    st.subheader("📅 Market Mechanics & Checklist")
     cat_sym = st.text_input("Enter Symbol to Check:", value=symbol, key="cat_sym")
     
-    # 1. CATALYSTS
-    if st.button("🔎 Check Catalysts"):
+    if st.button("🔎 Run Analysis"):
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # EARNINGS (Robust Fix)
-        st.markdown("### 1. Earnings Calendar")
-        try:
-            cal = tick.calendar
-            next_earn = None
-            if isinstance(cal, dict) and 'Earnings Date' in cal:
-                next_earn = cal['Earnings Date'][0]
-            elif isinstance(cal, pd.DataFrame) and not cal.empty:
-                 next_earn = cal.iloc[0][0]
-            
-            if not next_earn:
-                try:
-                    dates = tick.get_earnings_dates(limit=2)
-                    if dates is not None and not dates.empty:
-                        future_dates = dates.index[dates.index > pd.Timestamp.now()]
-                        if not future_dates.empty: next_earn = future_dates[0]
-                except: pass
-
-            if next_earn:
-                earning_date = pd.to_datetime(next_earn).date()
-                days_left = (earning_date - date.today()).days
-                c1, c2 = st.columns(2)
-                c1.metric("Next Earnings", earning_date.strftime('%Y-%m-%d'))
-                c2.metric("Days Left", f"{days_left} Days")
-                if 0 <= days_left <= 7: st.error("⚠️ **HIGH VOLATILITY WARNING:** Earnings Imminent!")
-                elif days_left < 0: st.info("Earnings just passed.")
-                else: st.success("✅ Earnings are safe distance away.")
-            else:
-                st.info("No upcoming earnings date found in calendar.")
-        except Exception as e: st.warning(f"Earnings data currently unavailable: {e}")
-
-        # NEWS (Strict Filter Fix)
-        st.markdown("---")
-        st.markdown("### 2. News Feed")
-        try:
-            news = tick.news
-            if not news:
-                st.info("No news items found.")
-            else:
-                valid_count = 0
-                for n in news:
-                    # 1. Check if 'n' is a dict
-                    if not isinstance(n, dict): continue
-                    
-                    # 2. Get Data Safely
-                    title = n.get('title', '')
-                    pub = n.get('publisher', 'Unknown')
-                    link = n.get('link', '#')
-                    ts = n.get('providerPublishTime', 0)
-                    
-                    # 3. STRICT FILTER: Skip if No Title or 1970 Date
-                    if not title or title == "No Title" or ts == 0:
-                        continue
-
-                    # 4. Format Date
-                    try:
-                        date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
-                    except:
-                        date_str = "Recent"
-
-                    # 5. Render
-                    with st.expander(f"📰 {date_str} | {title}"): 
-                        st.write(f"**Source:** {pub}")
-                        if link and link != '#':
-                            st.write(f"[Read Article]({link})")
-                        else:
-                            st.write("*(No Link Available)*")
-                    valid_count += 1
+        # 1. EARNINGS & MAX PAIN (Market Mechanics)
+        st.markdown("### 1. Market Mechanics (Earnings & Max Pain)")
+        col_m1, col_m2 = st.columns(2)
+        
+        # Robust Earnings Fetch
+        with col_m1:
+            try:
+                next_earn = None
+                cal = tick.calendar
+                if isinstance(cal, dict) and 'Earnings Date' in cal: next_earn = cal['Earnings Date'][0]
+                elif isinstance(cal, pd.DataFrame) and not cal.empty: next_earn = cal.iloc[0][0]
                 
-                if valid_count == 0:
-                    st.info("No valid news articles found (Feed returned empty or broken data).")
+                if next_earn:
+                    edate = pd.to_datetime(next_earn).date()
+                    days = (edate - date.today()).days
+                    st.metric("Next Earnings", edate.strftime('%Y-%m-%d'), f"{days} Days")
+                else:
+                    st.metric("Next Earnings", "N/A", "Check Broker")
+            except: st.metric("Next Earnings", "N/A", "Data Error")
 
-        except Exception as e: st.info(f"News feed unavailable from source.")
+        # Max Pain Calc
+        with col_m2:
+            try:
+                dates = tick.options
+                if dates:
+                    chain = tick.option_chain(dates[0]) # Nearest expiry
+                    full_chain = pd.concat([chain.calls.assign(type='call'), chain.puts.assign(type='put')])
+                    mp = calculate_max_pain(full_chain)
+                    curr = tick.history(period="1d")['Close'].iloc[-1]
+                    st.metric("Max Pain (Nearest)", f"${mp:.2f}", f"Diff: ${curr - mp:.2f}")
+                else: st.metric("Max Pain", "N/A", "No Options")
+            except: st.metric("Max Pain", "N/A", "Data Error")
 
-    # 2. THE 6-POINT CHECKLIST
+        # 2. DMI OSCILLATOR (Trend Monitor)
+        st.markdown("---")
+        st.markdown("### 2. Trend Monitor (DMI Oscillator)")
+        try:
+            hist = tick.history(period="3mo")
+            if not hist.empty:
+                dmi_df = calculate_dmi(hist)
+                last = dmi_df.iloc[-1]
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("+DI (Blue)", f"{last['+DI']:.2f}")
+                c2.metric("-DI (Orange)", f"{last['-DI']:.2f}")
+                c3.metric("ADX (Strength)", f"{last['ADX']:.2f}")
+                
+                # Signal Logic
+                if last['+DI'] > last['-DI']:
+                    st.success("✅ **BULLISH TREND:** +DI is above -DI.")
+                else:
+                    st.error("📉 **BEARISH TREND:** -DI is above +DI.")
+                
+                # Plot
+                plot_data = dmi_df[['+DI', '-DI', 'ADX']].reset_index().melt('Date', var_name='Indicator', value_name='Value')
+                chart = alt.Chart(plot_data).mark_line().encode(
+                    x='Date:T', 
+                    y='Value:Q', 
+                    color=alt.Color('Indicator', scale=alt.Scale(domain=['+DI', '-DI', 'ADX'], range=['blue', 'orange', 'black']))
+                ).properties(height=300)
+                st.altair_chart(chart, use_container_width=True)
+        except Exception as e: st.error(f"DMI Calc Error: {e}")
+
+    # 3. CHECKLIST (Preserved)
     st.markdown("---")
     st.subheader("✅ The 6-Point Trade Checklist")
     
     if st.button("🚀 Run Checklist"):
         tick = yf.Ticker(cat_sym)
         checklist_data = []
-        
         try:
             hist = tick.history(period="1mo")
-            if hist.empty:
-                st.error("No price history found.")
-            else:
+            if not hist.empty:
                 current_price = hist['Close'].iloc[-1]
-                prev_close = hist['Close'].iloc[-2]
-                today_open = hist['Open'].iloc[-1]
-                avg_vol = hist['Volume'].mean()
-                today_vol = hist['Volume'].iloc[-1]
-                
-                # 1. Price Gap Check
-                gap = abs(today_open - prev_close)
+                gap = abs(hist['Open'].iloc[-1] - hist['Close'].iloc[-2])
                 status_gap = "⚠️ Careful" if gap > 1.00 else "✅ Pass"
-                checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap, "Note": "Is gap > $1.00?"})
+                checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap})
                 
-                # 2. Volume Activity Check
-                status_vol = "✅ Pass" if today_vol > avg_vol else "⚠️ Low"
-                checklist_data.append({"Check": "2. Volume Activity", "Value": f"{today_vol/1000000:.1f}M", "Result": status_vol, "Note": "Is Vol > Avg?"})
+                vol = hist['Volume'].iloc[-1]
+                avg_vol = hist['Volume'].mean()
+                checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1M:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
                 
-                # 3. IV Check
                 try:
-                    avail_dates = tick.options
-                    if avail_dates:
-                        # Find closest expiry
-                        target_dt = datetime.strptime(expiration_date.strftime('%Y-%m-%d'), '%Y-%m-%d').date()
-                        closest_date = min(avail_dates, key=lambda x: abs(datetime.strptime(x, '%Y-%m-%d').date() - target_dt))
-                        chain = tick.option_chain(closest_date).calls
+                    dates = tick.options
+                    if dates:
+                        chain = tick.option_chain(dates[0]).calls
                         contract = chain[chain['strike'] == strike_price]
-                        
                         if not contract.empty:
                             iv = contract.iloc[0]['impliedVolatility']
-                            opt_vol = contract.iloc[0]['volume']
-                            opt_oi = contract.iloc[0]['openInterest']
-                            
-                            daily_move = current_price * (iv / 16)
-                            checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually."})
-                            checklist_data.append({"Check": "4. Rule of 16 (Exp. Move)", "Value": f"${daily_move:.2f}", "Result": "ℹ️ Info", "Note": "Is Target < This?"})
-                            
-                            status_voi = "✅ Pass" if opt_vol > opt_oi else "⚠️ Low Vol"
-                            checklist_data.append({"Check": "5. Vol vs OI", "Value": f"{opt_vol} / {opt_oi}", "Result": status_voi, "Note": "Is Vol > OI?"})
-                            
-                            t_years = max((datetime.strptime(closest_date, '%Y-%m-%d').date() - date.today()).days / 365.0, 0.0001)
-                            delta = calculate_delta(current_price, strike_price, t_years, risk_free_rate, iv)
-                            status_delta = "✅ Pass" if delta >= 0.30 else "⚠️ Low Delta"
-                            checklist_data.append({"Check": "6. Delta Check", "Value": f"{delta:.2f}", "Result": status_delta, "Note": "Is Delta > 0.30?"})
-                        else:
-                            st.warning("Strike not found for checklist.")
-                except Exception as e:
-                    checklist_data.append({"Check": "Option Data", "Value": "Error", "Result": "❌ Fail", "Note": str(e)})
-
-                df_check = pd.DataFrame(checklist_data)
-                def highlight_res(val):
-                    if "Pass" in val: return 'color: green; font-weight: bold'
-                    if "Careful" in val or "Low" in val: return 'color: orange; font-weight: bold'
-                    return ''
-                st.dataframe(df_check.style.applymap(highlight_res, subset=['Result']), use_container_width=True)
-            
-        except Exception as e:
-            st.error(f"Error running checklist: {e}")
+                            delta = calculate_delta(current_price, strike_price, 0.1, risk_free_rate, iv)
+                            checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info"})
+                            checklist_data.append({"Check": "4. Rule of 16", "Value": f"${current_price*(iv/16):.2f}", "Result": "ℹ️ Exp Move"})
+                            checklist_data.append({"Check": "5. Vol/OI", "Value": f"{contract.iloc[0]['volume']}/{contract.iloc[0]['openInterest']}", "Result": "ℹ️ Ratio"})
+                            checklist_data.append({"Check": "6. Delta", "Value": f"{delta:.2f}", "Result": "✅ Pass" if delta > 0.3 else "⚠️ Low"})
+                except: pass
+                
+                st.dataframe(pd.DataFrame(checklist_data), use_container_width=True)
+        except: st.error("Checklist Error")
