@@ -293,7 +293,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST & CHECKLIST (UPDATED NEWS & EARNINGS)
+#  TAB 4: CATALYST & CHECKLIST (ROBUST FIX)
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Catalyst & Pre-Trade Checklist")
@@ -305,16 +305,16 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # EARNINGS (Robust Fix)
+        # EARNINGS (Fixed for empty/dict/df variations)
         st.markdown("### 1. Earnings Calendar")
         try:
-            # Try multiple ways to access calendar (yfinance structure varies)
             cal = tick.calendar
             next_earn = None
-            
+            # Check structure (it changes often in yfinance)
             if isinstance(cal, dict) and 'Earnings Date' in cal:
                 next_earn = cal['Earnings Date'][0]
             elif isinstance(cal, pd.DataFrame) and not cal.empty:
+                 # Usually row 0 col 0
                  next_earn = cal.iloc[0][0]
             
             if next_earn:
@@ -327,25 +327,31 @@ with tab_catalyst:
                 elif days_left < 0: st.info("Earnings just passed.")
                 else: st.success("✅ Earnings are safe distance away.")
             else:
-                st.info("No upcoming earnings date found.")
+                st.info("No upcoming earnings date found in calendar.")
         except Exception as e: st.warning(f"Could not retrieve earnings: {e}")
 
-        # NEWS (Robust Fix - Unlimited Items + Dates)
+        # NEWS (Fixed for 'title' key error + Unlimited History)
         st.markdown("---")
         st.markdown("### 2. News Feed")
         try:
             news = tick.news
             if news:
-                # Iterate through ALL available news items
+                count = 0
                 for n in news:
-                    # Convert timestamp to readable date
-                    pub_time = n.get('providerPublishTime', 0)
-                    pub_date_str = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d %H:%M')
+                    # Safely get keys (fixes KeyError)
+                    title = n.get('title', 'No Title')
+                    pub = n.get('publisher', 'Unknown')
+                    link = n.get('link', '#')
+                    # Convert timestamp
+                    ts = n.get('providerPublishTime', 0)
+                    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
                     
-                    with st.expander(f"📰 {pub_date_str} | {n['title']}"): 
-                        st.write(f"**Source:** {n['publisher']}")
-                        st.write(f"[Read Article]({n['link']})")
-            else: st.info("No news found.")
+                    with st.expander(f"📰 {date_str} | {title}"): 
+                        st.write(f"**Source:** {pub}")
+                        st.write(f"[Read Article]({link})")
+                    count += 1
+                if count == 0: st.info("No news items found.")
+            else: st.info("No news feed available.")
         except Exception as e: st.info(f"News feed unavailable: {e}")
 
     # 2. THE 6-POINT CHECKLIST
@@ -358,57 +364,61 @@ with tab_catalyst:
         
         try:
             hist = tick.history(period="1mo")
-            current_price = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2]
-            today_open = hist['Open'].iloc[-1]
-            avg_vol = hist['Volume'].mean()
-            today_vol = hist['Volume'].iloc[-1]
-            
-            # 1. Price Gap Check
-            gap = abs(today_open - prev_close)
-            status_gap = "⚠️ Careful" if gap > 1.00 else "✅ Pass"
-            checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap, "Note": "Is gap > $1.00?"})
-            
-            # 2. Volume Activity Check
-            status_vol = "✅ Pass" if today_vol > avg_vol else "⚠️ Low"
-            checklist_data.append({"Check": "2. Volume Activity", "Value": f"{today_vol/1000000:.1f}M", "Result": status_vol, "Note": "Is Vol > Avg?"})
-            
-            # 3. IV Check
-            try:
-                avail_dates = tick.options
-                if avail_dates:
-                    target_dt = datetime.strptime(expiration_date.strftime('%Y-%m-%d'), '%Y-%m-%d').date()
-                    closest_date = min(avail_dates, key=lambda x: abs(datetime.strptime(x, '%Y-%m-%d').date() - target_dt))
-                    chain = tick.option_chain(closest_date).calls
-                    contract = chain[chain['strike'] == strike_price]
-                    
-                    if not contract.empty:
-                        iv = contract.iloc[0]['impliedVolatility']
-                        opt_vol = contract.iloc[0]['volume']
-                        opt_oi = contract.iloc[0]['openInterest']
+            if hist.empty:
+                st.error("No price history found.")
+            else:
+                current_price = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2]
+                today_open = hist['Open'].iloc[-1]
+                avg_vol = hist['Volume'].mean()
+                today_vol = hist['Volume'].iloc[-1]
+                
+                # 1. Price Gap Check
+                gap = abs(today_open - prev_close)
+                status_gap = "⚠️ Careful" if gap > 1.00 else "✅ Pass"
+                checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap, "Note": "Is gap > $1.00?"})
+                
+                # 2. Volume Activity Check
+                status_vol = "✅ Pass" if today_vol > avg_vol else "⚠️ Low"
+                checklist_data.append({"Check": "2. Volume Activity", "Value": f"{today_vol/1000000:.1f}M", "Result": status_vol, "Note": "Is Vol > Avg?"})
+                
+                # 3. IV Check
+                try:
+                    avail_dates = tick.options
+                    if avail_dates:
+                        # Find closest expiry
+                        target_dt = datetime.strptime(expiration_date.strftime('%Y-%m-%d'), '%Y-%m-%d').date()
+                        closest_date = min(avail_dates, key=lambda x: abs(datetime.strptime(x, '%Y-%m-%d').date() - target_dt))
+                        chain = tick.option_chain(closest_date).calls
+                        contract = chain[chain['strike'] == strike_price]
                         
-                        daily_move = current_price * (iv / 16)
-                        checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually."})
-                        checklist_data.append({"Check": "4. Rule of 16 (Exp. Move)", "Value": f"${daily_move:.2f}", "Result": "ℹ️ Info", "Note": "Is Target < This?"})
-                        
-                        status_voi = "✅ Pass" if opt_vol > opt_oi else "⚠️ Low Vol"
-                        checklist_data.append({"Check": "5. Vol vs OI", "Value": f"{opt_vol} / {opt_oi}", "Result": status_voi, "Note": "Is Vol > OI?"})
-                        
-                        t_years = max((datetime.strptime(closest_date, '%Y-%m-%d').date() - date.today()).days / 365.0, 0.0001)
-                        delta = calculate_delta(current_price, strike_price, t_years, risk_free_rate, iv)
-                        status_delta = "✅ Pass" if delta >= 0.30 else "⚠️ Low Delta"
-                        checklist_data.append({"Check": "6. Delta Check", "Value": f"{delta:.2f}", "Result": status_delta, "Note": "Is Delta > 0.30?"})
-                    else:
-                        st.error("Strike not found for checklist.")
-            except Exception as e:
-                checklist_data.append({"Check": "Option Data", "Value": "Error", "Result": "❌ Fail", "Note": str(e)})
+                        if not contract.empty:
+                            iv = contract.iloc[0]['impliedVolatility']
+                            opt_vol = contract.iloc[0]['volume']
+                            opt_oi = contract.iloc[0]['openInterest']
+                            
+                            daily_move = current_price * (iv / 16)
+                            checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info", "Note": "Check IV Rank manually."})
+                            checklist_data.append({"Check": "4. Rule of 16 (Exp. Move)", "Value": f"${daily_move:.2f}", "Result": "ℹ️ Info", "Note": "Is Target < This?"})
+                            
+                            status_voi = "✅ Pass" if opt_vol > opt_oi else "⚠️ Low Vol"
+                            checklist_data.append({"Check": "5. Vol vs OI", "Value": f"{opt_vol} / {opt_oi}", "Result": status_voi, "Note": "Is Vol > OI?"})
+                            
+                            t_years = max((datetime.strptime(closest_date, '%Y-%m-%d').date() - date.today()).days / 365.0, 0.0001)
+                            delta = calculate_delta(current_price, strike_price, t_years, risk_free_rate, iv)
+                            status_delta = "✅ Pass" if delta >= 0.30 else "⚠️ Low Delta"
+                            checklist_data.append({"Check": "6. Delta Check", "Value": f"{delta:.2f}", "Result": status_delta, "Note": "Is Delta > 0.30?"})
+                        else:
+                            st.warning("Strike not found for checklist.")
+                except Exception as e:
+                    checklist_data.append({"Check": "Option Data", "Value": "Error", "Result": "❌ Fail", "Note": str(e)})
 
-            df_check = pd.DataFrame(checklist_data)
-            def highlight_res(val):
-                if "Pass" in val: return 'color: green; font-weight: bold'
-                if "Careful" in val or "Low" in val: return 'color: orange; font-weight: bold'
-                return ''
-            st.dataframe(df_check.style.applymap(highlight_res, subset=['Result']), use_container_width=True)
+                df_check = pd.DataFrame(checklist_data)
+                def highlight_res(val):
+                    if "Pass" in val: return 'color: green; font-weight: bold'
+                    if "Careful" in val or "Low" in val: return 'color: orange; font-weight: bold'
+                    return ''
+                st.dataframe(df_check.style.applymap(highlight_res, subset=['Result']), use_container_width=True)
             
         except Exception as e:
             st.error(f"Error running checklist: {e}")
