@@ -305,18 +305,30 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # EARNINGS (Fixed for empty/dict/df variations)
+        # EARNINGS (Robust Fix)
         st.markdown("### 1. Earnings Calendar")
         try:
+            # Try Method 1: Calendar
             cal = tick.calendar
             next_earn = None
-            # Check structure (it changes often in yfinance)
+            
+            # Detect data structure (Dict or DataFrame)
             if isinstance(cal, dict) and 'Earnings Date' in cal:
                 next_earn = cal['Earnings Date'][0]
             elif isinstance(cal, pd.DataFrame) and not cal.empty:
-                 # Usually row 0 col 0
                  next_earn = cal.iloc[0][0]
             
+            # If Method 1 failed, Try Method 2: get_earnings_dates()
+            if not next_earn:
+                try:
+                    dates = tick.get_earnings_dates(limit=2)
+                    if dates is not None and not dates.empty:
+                        # Find first future date
+                        future_dates = dates.index[dates.index > pd.Timestamp.now()]
+                        if not future_dates.empty:
+                            next_earn = future_dates[0]
+                except: pass
+
             if next_earn:
                 earning_date = pd.to_datetime(next_earn).date()
                 days_left = (earning_date - date.today()).days
@@ -328,31 +340,34 @@ with tab_catalyst:
                 else: st.success("✅ Earnings are safe distance away.")
             else:
                 st.info("No upcoming earnings date found in calendar.")
-        except Exception as e: st.warning(f"Could not retrieve earnings: {e}")
+        except Exception as e: st.warning(f"Earnings data currently unavailable: {e}")
 
-        # NEWS (Fixed for 'title' key error + Unlimited History)
+        # NEWS (Robust Fix for Missing Keys)
         st.markdown("---")
         st.markdown("### 2. News Feed")
         try:
             news = tick.news
-            if news:
-                count = 0
+            if not news:
+                st.info("No news items found.")
+            else:
+                # Iterate through ALL available news without crashing
                 for n in news:
-                    # Safely get keys (fixes KeyError)
+                    # Use .get() to avoid KeyError if 'title' is missing
                     title = n.get('title', 'No Title')
-                    pub = n.get('publisher', 'Unknown')
+                    pub = n.get('publisher', 'Unknown Source')
                     link = n.get('link', '#')
-                    # Convert timestamp
+                    
+                    # Convert timestamp safely
                     ts = n.get('providerPublishTime', 0)
-                    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    try:
+                        date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    except:
+                        date_str = "Unknown Date"
                     
                     with st.expander(f"📰 {date_str} | {title}"): 
                         st.write(f"**Source:** {pub}")
                         st.write(f"[Read Article]({link})")
-                    count += 1
-                if count == 0: st.info("No news items found.")
-            else: st.info("No news feed available.")
-        except Exception as e: st.info(f"News feed unavailable: {e}")
+        except Exception as e: st.info(f"News feed unavailable from source.")
 
     # 2. THE 6-POINT CHECKLIST
     st.markdown("---")
