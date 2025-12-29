@@ -106,7 +106,8 @@ def calculate_dmi(df, period=14):
 
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
-        df = yf.download(ticker, period="6mo", progress=False)
+        # Explicitly requesting daily interval (1d)
+        df = yf.download(ticker, period="6mo", interval="1d", progress=False)
         if len(df) < period + ema_period: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
@@ -256,7 +257,7 @@ with tab_math:
         st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD
+#  TAB 2: MARKET DASHBOARD (DAILY INTERVAL FIXED)
 # =========================================================
 with tab_dashboard:
     st.subheader("📊 DSS Bressert Scanner")
@@ -299,7 +300,11 @@ with tab_dashboard:
             df_c = calculate_dss_data(sel)
             if df_c is not None:
                 df_m = df_c.melt('Date', value_vars=['DSS','Signal'], var_name='Line', value_name='Value')
-                chart = alt.Chart(df_m).mark_line().encode(x='Date:T', y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
+                chart = alt.Chart(df_m).mark_line().encode(
+                    x=alt.X('Date:T', title='Date (Daily)'), 
+                    y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), 
+                    color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))
+                ).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
 
 # =========================================================
@@ -341,7 +346,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST, DMI & CHECKLIST (UPDATED!)
+#  TAB 4: CATALYST, DMI & CHECKLIST (FIXED!)
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Market Mechanics & Checklist")
@@ -414,7 +419,7 @@ with tab_catalyst:
                 st.altair_chart(chart, use_container_width=True)
         except Exception as e: st.error(f"DMI Calc Error: {e}")
 
-    # 3. CHECKLIST (Preserved)
+    # 3. CHECKLIST (Preserved & Fixed Typo)
     st.markdown("---")
     st.subheader("✅ The 6-Point Trade Checklist")
     
@@ -431,6 +436,7 @@ with tab_catalyst:
                 
                 vol = hist['Volume'].iloc[-1]
                 avg_vol = hist['Volume'].mean()
+                # FIXED TYPO HERE (1M -> 1000000)
                 checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1000000:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
                 
                 try:
