@@ -72,13 +72,11 @@ def calculate_delta(S, K, T, r, sigma, option_type='call'):
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_max_pain(options_chain):
-    """Calculates the strike price where option writers lose the least money."""
     strikes = options_chain['strike'].unique()
     max_pain_data = []
     for strike in strikes:
         calls_at_strike = options_chain[options_chain['type'] == 'call']
         puts_at_strike = options_chain[options_chain['type'] == 'put']
-        # Simple calculation: Sum of Intrinsic Value * Open Interest
         call_loss = calls_at_strike.apply(lambda x: max(0, strike - x['strike']) * x['openInterest'], axis=1).sum()
         put_loss = puts_at_strike.apply(lambda x: max(0, x['strike'] - strike) * x['openInterest'], axis=1).sum()
         max_pain_data.append({'strike': strike, 'total_loss': call_loss + put_loss})
@@ -88,42 +86,32 @@ def calculate_max_pain(options_chain):
     return df_pain.loc[df_pain['total_loss'].idxmin()]['strike']
 
 def calculate_dmi(df, period=14):
-    """Calculates +DI, -DI and ADX."""
     df = df.copy()
     df['UpMove'] = df['High'] - df['High'].shift(1)
     df['DownMove'] = df['Low'].shift(1) - df['Low']
-    
     df['+DM'] = np.where((df['UpMove'] > df['DownMove']) & (df['UpMove'] > 0), df['UpMove'], 0)
     df['-DM'] = np.where((df['DownMove'] > df['UpMove']) & (df['DownMove'] > 0), df['DownMove'], 0)
-    
     df['TR'] = np.maximum(df['High'] - df['Low'], np.maximum(abs(df['High'] - df['Close'].shift(1)), abs(df['Low'] - df['Close'].shift(1))))
-    
     df['+DI'] = 100 * (df['+DM'].ewm(alpha=1/period).mean() / df['TR'].ewm(alpha=1/period).mean())
     df['-DI'] = 100 * (df['-DM'].ewm(alpha=1/period).mean() / df['TR'].ewm(alpha=1/period).mean())
     df['ADX'] = 100 * abs((df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])).ewm(alpha=1/period).mean()
-    
     return df
 
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
-        # Explicitly requesting daily interval (1d)
-        df = yf.download(ticker, period="6mo", interval="1d", progress=False)
+        df = yf.download(ticker, period="6mo", progress=False)
         if len(df) < period + ema_period: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        
         high, low, close = df['High'], df['Low'], df['Close']
         lowest_low = low.rolling(window=period).min()
         highest_high = high.rolling(window=period).max()
         stoch_raw = (close - lowest_low) / (highest_high - lowest_low) * 100
         xPreCalc = stoch_raw.ewm(span=ema_period, adjust=False).mean()
-        
         lowest_smooth = xPreCalc.rolling(window=period).min()
         highest_smooth = xPreCalc.rolling(window=period).max()
         denominator = (highest_smooth - lowest_smooth).replace(0, 1)
-        
         stoch_smooth = (xPreCalc - lowest_smooth) / denominator * 100
         dss = stoch_smooth.ewm(span=ema_period, adjust=False).mean()
-        
         df['DSS'] = dss
         df['Signal'] = df['DSS'].ewm(span=4, adjust=False).mean()
         return df[['Close', 'DSS', 'Signal']].dropna().reset_index()
@@ -257,7 +245,7 @@ with tab_math:
         st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD (DAILY INTERVAL FIXED)
+#  TAB 2: MARKET DASHBOARD
 # =========================================================
 with tab_dashboard:
     st.subheader("📊 DSS Bressert Scanner")
@@ -346,7 +334,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST, DMI & CHECKLIST (FIXED!)
+#  TAB 4: CATALYST, DMI & CHECKLIST (FUTURE DATE FIX & STRICT NEWS FILTER)
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Market Mechanics & Checklist")
@@ -356,22 +344,39 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # 1. EARNINGS & MAX PAIN (Market Mechanics)
+        # 1. EARNINGS & MAX PAIN (Fixed Logic)
         st.markdown("### 1. Market Mechanics (Earnings & Max Pain)")
         col_m1, col_m2 = st.columns(2)
         
-        # Robust Earnings Fetch
+        # Robust Earnings Fetch with Future Enforcement
         with col_m1:
             try:
                 next_earn = None
                 cal = tick.calendar
+                # Try finding in Calendar
                 if isinstance(cal, dict) and 'Earnings Date' in cal: next_earn = cal['Earnings Date'][0]
                 elif isinstance(cal, pd.DataFrame) and not cal.empty: next_earn = cal.iloc[0][0]
                 
+                # Try finding in get_earnings_dates
+                if not next_earn:
+                    try:
+                        dates = tick.get_earnings_dates(limit=3)
+                        if dates is not None and not dates.empty:
+                            # Filter only dates in future
+                            future_dates = dates.index[dates.index > pd.Timestamp.now()]
+                            if not future_dates.empty: next_earn = future_dates[-1] # Take furthest confirmed
+                    except: pass
+
+                # Logic: If date is in past, add 90 days estimate
+                earning_label = "Confirmed"
                 if next_earn:
                     edate = pd.to_datetime(next_earn).date()
+                    if edate < date.today():
+                        edate = edate + timedelta(days=90) # Estimate next qtr
+                        earning_label = "Estimated (Calc)"
+                    
                     days = (edate - date.today()).days
-                    st.metric("Next Earnings", edate.strftime('%Y-%m-%d'), f"{days} Days")
+                    st.metric(f"Next Earnings ({earning_label})", edate.strftime('%Y-%m-%d'), f"{days} Days")
                 else:
                     st.metric("Next Earnings", "N/A", "Check Broker")
             except: st.metric("Next Earnings", "N/A", "Data Error")
@@ -419,7 +424,33 @@ with tab_catalyst:
                 st.altair_chart(chart, use_container_width=True)
         except Exception as e: st.error(f"DMI Calc Error: {e}")
 
-    # 3. CHECKLIST (Preserved & Fixed Typo)
+        # 3. NEWS FEED (STRICT FILTER)
+        st.markdown("---")
+        st.markdown("### 3. Recent News (Filtered)")
+        try:
+            news = tick.news
+            valid_news_count = 0
+            if news:
+                for n in news:
+                    # STRICT FILTER: Skip if No Title or Bad Date
+                    title = n.get('title', '')
+                    ts = n.get('providerPublishTime', 0)
+                    if not title or title == "No Title" or ts == 0: continue
+                    
+                    pub = n.get('publisher', 'Unknown')
+                    link = n.get('link', '#')
+                    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    
+                    with st.expander(f"📰 {date_str} | {title}"):
+                        st.write(f"**Source:** {pub}")
+                        if link != '#': st.write(f"[Read Article]({link})")
+                    valid_news_count += 1
+            
+            if valid_news_count == 0:
+                st.info("No recent news articles found (Feed returned empty or invalid data).")
+        except: st.info("News feed unavailable.")
+
+    # 4. CHECKLIST (Preserved & Fixed Typo)
     st.markdown("---")
     st.subheader("✅ The 6-Point Trade Checklist")
     
@@ -436,7 +467,7 @@ with tab_catalyst:
                 
                 vol = hist['Volume'].iloc[-1]
                 avg_vol = hist['Volume'].mean()
-                # FIXED TYPO HERE (1M -> 1000000)
+                # FIXED TYPO HERE (1000000)
                 checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1000000:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
                 
                 try:
