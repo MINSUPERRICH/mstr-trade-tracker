@@ -215,7 +215,7 @@ with tab_math:
     st.altair_chart(c, use_container_width=True)
     st.download_button("📥 Download Heatmap", df_hm.to_csv().encode('utf-8'), "Heatmap.csv", "text/csv")
     
-    # Time Decay
+    # Time Decay (FIXED: Handling Empty Data)
     st.markdown("---")
     st.subheader("📉 Time Decay Comparison")
     decay_data = []
@@ -227,7 +227,11 @@ with tab_math:
         if d < exp_date_b:
             tb = max((exp_date_b - d).days/365.0, 0.0001)
             decay_data.append({"Date": d, "Value": black_scholes(sim_price_b, strike_b, tb, risk_free_rate, implied_volatility), "Strategy": "Strategy B 🟠"})
-    st.altair_chart(alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(x='Date:T', y='Value:Q', color='Strategy').properties(height=350).interactive(), use_container_width=True)
+    
+    if not decay_data:
+        st.warning("⚠️ No time decay data to plot (Contracts might be expired or invalid dates).")
+    else:
+        st.altair_chart(alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(x='Date:T', y='Value:Q', color='Strategy').properties(height=350).interactive(), use_container_width=True)
 
     # Q&A
     st.markdown("---")
@@ -334,7 +338,7 @@ with tab_ai:
             st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST, DMI & CHECKLIST (FUTURE DATE FIX & STRICT NEWS FILTER)
+#  TAB 4: CATALYST, DMI & CHECKLIST
 # =========================================================
 with tab_catalyst:
     st.subheader("📅 Market Mechanics & Checklist")
@@ -344,7 +348,7 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # 1. EARNINGS & MAX PAIN (Fixed Logic)
+        # 1. EARNINGS & MAX PAIN (Market Mechanics)
         st.markdown("### 1. Market Mechanics (Earnings & Max Pain)")
         col_m1, col_m2 = st.columns(2)
         
