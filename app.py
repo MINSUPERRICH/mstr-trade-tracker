@@ -305,7 +305,7 @@ st.markdown("---")
 st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
     
     # --- 1. Math Helper for Gamma (Add this inside the tab or at top of file) ---
-    def calculate_gamma(S, K, T, r, sigma):
+ def calculate_gamma(S, K, T, r, sigma):
         try:
             if T <= 0 or sigma <= 0: return 0
             d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
@@ -562,6 +562,7 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
 
 
