@@ -9,6 +9,7 @@ import io
 import google.generativeai as genai
 import yfinance as yf
 import json
+
 # Try importing GoogleNews, handle error if not installed
 try:
     from GoogleNews import GoogleNews
@@ -60,7 +61,7 @@ if not check_password():
     st.stop()
 
 # =========================================================
-#  MATH ENGINE (ALL CALCULATIONS HERE)
+#  MATH ENGINE
 # =========================================================
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     if T <= 0: return max(0, S - K) if option_type == 'call' else max(0, K - S)
@@ -147,10 +148,7 @@ symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
 current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
 strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
 expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
-
-# FIX: Use date.today() so it is always current
 purchase_date = st.sidebar.date_input("Purchase Date", value=date.today())
-
 entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
@@ -332,9 +330,17 @@ with tab_dashboard:
                 target_date = dates[0]
                 st.info(f"📅 Analyzing Expiry: **{target_date}**")
                 
-                # 2. Get Data
+                # 2. Get Data (Calls AND Puts)
                 chain = tick.option_chain(target_date)
-                df = chain.calls.copy()
+                
+                # Add 'Type' tag and combine
+                calls = chain.calls.copy()
+                calls['Type'] = 'Call'
+                
+                puts = chain.puts.copy()
+                puts['Type'] = 'Put'
+                
+                df = pd.concat([calls, puts], ignore_index=True)
                 
                 # 3. Calculate Metrics
                 current_price = tick.history(period="1d")['Close'].iloc[-1]
@@ -346,20 +352,27 @@ with tab_dashboard:
                     vol = row['volume'] if row['volume'] > 0 else 0
                     oi = row['openInterest'] if row['openInterest'] > 0 else 1 
                     iv = row['impliedVolatility']
+                    opt_type = row['Type']
                     
                     vol_oi_ratio = vol / oi
-                    moneyness = ((current_price - strike) / strike) * 100
+                    
+                    # Moneyness logic
+                    if opt_type == 'Call':
+                        moneyness = ((current_price - strike) / strike) * 100
+                    else:
+                        moneyness = ((strike - current_price) / current_price) * 100
                     
                     days_to_exp = (pd.to_datetime(target_date) - pd.Timestamp.now()).days
                     t_years = max(days_to_exp / 365.0, 0.001)
                     
-                    delta = calculate_delta(current_price, strike, t_years, risk_free_rate, iv, 'call')
+                    # Pass correct type to delta
+                    delta = calculate_delta(current_price, strike, t_years, risk_free_rate, iv, opt_type.lower())
                     gamma = calculate_gamma(current_price, strike, t_years, risk_free_rate, iv)
                     
                     scanner_data.append({
                         "Strike": strike,
                         "Price": f"${current_price:.2f}",
-                        "Type": "Call",
+                        "Type": opt_type,
                         "Vol": int(vol),
                         "OI": int(oi),
                         "Vol/OI": round(vol_oi_ratio, 2),
@@ -370,20 +383,35 @@ with tab_dashboard:
                     })
                 
                 df_scan = pd.DataFrame(scanner_data)
+                
+                # Filter noise
                 df_scan['Abs_Mon'] = df_scan['Moneyness'].str.strip('%').astype(float).abs()
                 df_scan = df_scan[df_scan['Abs_Mon'] < 40].drop(columns=['Abs_Mon'])
+                
+                # Sort by Volume/OI Ratio
                 df_scan = df_scan.sort_values(by="Vol/OI", ascending=False).reset_index(drop=True)
 
                 st.write("🔥 **Top Strikes by Volume/OI Velocity** (Smart Money Tracking)")
                 
+                # --- COLOR FIX ---
                 def highlight_hot(val):
-                    color = '#1c4f2a' if val > 2.0 else '' 
-                    return f'background-color: {color}'
+                    # Dark Green Background + White Text for readability
+                    if val > 2.0:
+                        return 'background-color: #1c4f2a; color: white; font-weight: bold'
+                    return ''
                 
                 st.dataframe(
                     df_scan.style.applymap(highlight_hot, subset=['Vol/OI']),
                     use_container_width=True,
                     height=500
+                )
+                
+                # --- DOWNLOAD BUTTON ---
+                st.download_button(
+                    label="📥 Download Results (Excel/CSV)",
+                    data=df_scan.to_csv(index=False).encode('utf-8'),
+                    file_name=f"{symbol}_Option_Scan_{target_date}.csv",
+                    mime="text/csv"
                 )
                 
         except Exception as e:
