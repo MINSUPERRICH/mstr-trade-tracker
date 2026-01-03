@@ -9,6 +9,7 @@ import io
 import google.generativeai as genai
 import yfinance as yf
 import json
+import time  # <--- NEW: Needed for pausing requests
 
 # Try importing GoogleNews, handle error if not installed
 try:
@@ -61,7 +62,7 @@ if not check_password():
     st.stop()
 
 # =========================================================
-#  MATH ENGINE
+#  MATH ENGINE (ALL CALCULATIONS HERE)
 # =========================================================
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     if T <= 0: return max(0, S - K) if option_type == 'call' else max(0, K - S)
@@ -111,8 +112,12 @@ def calculate_dmi(df, period=14):
     df['ADX'] = 100 * abs((df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])).ewm(alpha=1/period).mean()
     return df
 
+# --- CACHED FUNCTIONS (Prevents Rate Limiting) ---
+@st.cache_data(ttl=3600) # Cache for 1 hour
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
+        # Rate limit protection: sleep if we are looping fast
+        time.sleep(0.5) 
         df = yf.download(ticker, period="6mo", progress=False)
         if len(df) < period + ema_period: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -289,13 +294,21 @@ with tab_dashboard:
         
         res = []
         prog = st.progress(0)
+        
+        # --- FIXED: LOOP WITH SLEEP TO PREVENT RATE LIMITING ---
         for i, t in enumerate(final_tickers):
             df_h = calculate_dss_data(t)
             if df_h is not None and not df_h.empty:
                 dss = df_h['DSS'].iloc[-1]
                 stat = "🟢 OVERSOLD" if dss <= 20 else "🔴 OVERBOUGHT" if dss >= 80 else "Neutral"
                 res.append({"Ticker": t, "Price": f"${df_h['Close'].iloc[-1]:,.2f}", "DSS": round(dss, 2), "Status": stat})
+            
+            # Update Progress
             prog.progress((i+1)/len(final_tickers))
+            # Optional: Extra sleep in loop if you have >20 tickers
+            if len(final_tickers) > 10:
+                time.sleep(1) 
+        
         prog.empty()
         st.session_state["scan_results"] = res
 
@@ -331,6 +344,9 @@ with tab_dashboard:
                 st.info(f"📅 Analyzing Expiry: **{target_date}**")
                 
                 # 2. Get Data (Calls AND Puts)
+                # Cache-busting sleep
+                time.sleep(0.5)
+                
                 chain = tick.option_chain(target_date)
                 
                 # Add 'Type' tag and combine
@@ -415,7 +431,11 @@ with tab_dashboard:
                 )
                 
         except Exception as e:
-            st.error(f"Scanner Error: {e}")
+            # Better error message for Rate Limiting
+            if "Too Many Requests" in str(e) or "429" in str(e):
+                st.error("⚠️ Yahoo Finance Rate Limit Hit. Please wait 1 minute before scanning again.")
+            else:
+                st.error(f"Scanner Error: {e}")
 
 # =========================================================
 #  TAB 3: AI ANALYST
