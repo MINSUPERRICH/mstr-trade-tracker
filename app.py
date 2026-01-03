@@ -8,6 +8,7 @@ from PIL import Image
 import io
 import google.generativeai as genai
 import yfinance as yf
+import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -136,67 +137,63 @@ strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.
 expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
 purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
 entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
-implied_volatility = st.sidebar.slider("Global IV % (Baseline)", 10, 200, 95) / 100.0
+implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
 contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
 # --- TABS ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst = st.tabs(["⚔️ Strategy Battle", "📊 Market Dashboard", "📸 Chart Analyst", "📅 Catalyst & Checklist"])
+tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr = st.tabs([
+    "⚔️ Strategy Battle", 
+    "📊 Market Dashboard", 
+    "📸 Chart Analyst", 
+    "📅 Catalyst & Checklist",
+    "📸 Option Chain Visualizer"
+])
 
 # =========================================================
-#  TAB 1: STRATEGY BATTLE (INDEPENDENT IV)
+#  TAB 1: STRATEGY BATTLE
 # =========================================================
 with tab_math:
-    st.subheader(f"⚖️ Compare Strategies (Call vs Put / IV vs IV)")
+    st.subheader(f"⚖️ Compare Strategies")
     if st.button("🔄 Reset Scenarios"): st.rerun()
     col_a, col_b = st.columns(2)
 
-    # --- SCENARIO A ---
     with col_a:
         st.info("### 🔵 Strategy A")
         type_a = st.selectbox("Option Type", ["Call", "Put"], index=0, key="type_a")
         strike_a = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_a")
-        # Independent IV for A
         iv_a_display = st.slider("IV % (Scenario A)", 10, 200, int(implied_volatility*100), key="iv_a_slide")
         iv_a = iv_a_display / 100.0
-        
         exp_date_a = st.date_input("Expiration", value=expiration_date, key="exp_a")
         entry_price_a = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_a")
         contracts_a = st.number_input("Contracts", value=contracts, step=1, key="cnt_a")
-        
         st.markdown("---")
         sim_date_a = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_a, value=date.today() + timedelta(days=5), key="d_a", format="MMM DD")
         sim_price_a = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_a")
-        
         days_a = (exp_date_a - sim_date_a).days
         years_a = max(days_a / 365.0, 0.0001)
         opt_price_a = black_scholes(sim_price_a, strike_a, years_a, risk_free_rate, iv_a, type_a.lower())
         profit_a = (opt_price_a * 100 * contracts_a) - (entry_price_a * 100 * contracts_a)
-        st.metric(f"Est. {type_a} Value (IV {iv_a_display}%)", f"${opt_price_a:.2f}")
+        st.metric(f"Est. {type_a} Value", f"${opt_price_a:.2f}")
         st.metric("Net Profit (A)", f"${profit_a:,.2f}", delta_color="normal" if profit_a >= 0 else "inverse")
 
-    # --- SCENARIO B ---
     with col_b:
         st.warning("### 🟠 Strategy B")
         type_b = st.selectbox("Option Type", ["Call", "Put"], index=0, key="type_b")
         strike_b = st.number_input("Strike ($)", value=strike_price, step=0.50, key="str_b")
-        # Independent IV for B
         iv_b_display = st.slider("IV % (Scenario B)", 10, 200, int(implied_volatility*100), key="iv_b_slide")
         iv_b = iv_b_display / 100.0
-        
         exp_date_b = st.date_input("Expiration", value=expiration_date, key="exp_b")
         entry_price_b = st.number_input("Entry Price", value=entry_price, step=0.10, key="ent_b")
         contracts_b = st.number_input("Contracts", value=contracts, step=1, key="cnt_b")
-        
         st.markdown("---")
         sim_date_b = st.slider("Sell Date", min_value=date.today(), max_value=exp_date_b, value=date.today() + timedelta(days=5), key="d_b", format="MMM DD")
         sim_price_b = st.slider("Stock Price", min_value=float(current_stock_price * 0.5), max_value=float(current_stock_price * 2.0), value=float(current_stock_price), step=1.0, key="p_b")
-        
         days_b = (exp_date_b - sim_date_b).days
         years_b = max(days_b / 365.0, 0.0001)
         opt_price_b = black_scholes(sim_price_b, strike_b, years_b, risk_free_rate, iv_b, type_b.lower())
         profit_b = (opt_price_b * 100 * contracts_b) - (entry_price_b * 100 * contracts_b)
-        st.metric(f"Est. {type_b} Value (IV {iv_b_display}%)", f"${opt_price_b:.2f}")
+        st.metric(f"Est. {type_b} Value", f"${opt_price_b:.2f}")
         st.metric("Net Profit (B)", f"${profit_b:,.2f}", delta_color="normal" if profit_b >= 0 else "inverse")
 
     st.write("---")
@@ -205,18 +202,14 @@ with tab_math:
     elif diff < 0: st.warning(f"🏆 **Strategy B Wins!** (+${abs(diff):,.2f})")
     else: st.info("🤝 Draw")
 
-    # Downloads & Heatmap
     data_comp = {"Metric": ["Option Type", "IV %", "Profit"], "Strategy A": [type_a, iv_a_display, profit_a], "Strategy B": [type_b, iv_b_display, profit_b]}
     st.download_button("📥 Download Comparison", pd.DataFrame(data_comp).to_csv().encode('utf-8'), "Comp.csv", "text/csv")
     
     st.markdown("---")
     st.subheader("🗺️ Profit Heatmap")
     map_choice = st.radio("Show Map for:", ["Strategy A 🔵", "Strategy B 🟠"], horizontal=True)
-    
-    if map_choice == "Strategy A 🔵": 
-        h_st, h_ex, h_en, h_cn, h_type, h_iv = strike_a, exp_date_a, entry_price_a, contracts_a, type_a.lower(), iv_a
-    else: 
-        h_st, h_ex, h_en, h_cn, h_type, h_iv = strike_b, exp_date_b, entry_price_b, contracts_b, type_b.lower(), iv_b
+    if map_choice == "Strategy A 🔵": h_st, h_ex, h_en, h_cn, h_type, h_iv = strike_a, exp_date_a, entry_price_a, contracts_a, type_a.lower(), iv_a
+    else: h_st, h_ex, h_en, h_cn, h_type, h_iv = strike_b, exp_date_b, entry_price_b, contracts_b, type_b.lower(), iv_b
     
     prices = np.linspace(current_stock_price * 0.8, current_stock_price * 1.5, 20)
     future_dates = [date.today() + timedelta(days=x) for x in range(0, 60, 5)]
@@ -226,18 +219,11 @@ with tab_math:
         for p in prices:
             opt = black_scholes(p, h_st, t_years, risk_free_rate, h_iv, h_type)
             heatmap_data.append({"Date": d.strftime('%Y-%m-%d'), "Stock Price": round(p, 2), "Profit": round((opt - h_en)*100*h_cn, 2)})
-            
     df_hm = pd.DataFrame(heatmap_data)
-    c = alt.Chart(df_hm).mark_rect().encode(
-        x='Date:O', 
-        y='Stock Price:O', 
-        color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), 
-        tooltip=['Date','Stock Price','Profit']
-    ).properties(height=350)
+    c = alt.Chart(df_hm).mark_rect().encode(x='Date:O', y='Stock Price:O', color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), tooltip=['Date','Stock Price','Profit']).properties(height=350)
     st.altair_chart(c, use_container_width=True)
     st.download_button("📥 Download Heatmap", df_hm.to_csv().encode('utf-8'), "Heatmap.csv", "text/csv")
     
-    # Time Decay
     st.markdown("---")
     st.subheader("📉 Time Decay Comparison")
     decay_data = []
@@ -251,13 +237,9 @@ with tab_math:
             tb = max((exp_date_b - d).days/365.0, 0.0001)
             val_b = black_scholes(sim_price_b, strike_b, tb, risk_free_rate, iv_b, type_b.lower())
             decay_data.append({"Date": d, "Value": val_b, "Strategy": f"Strategy B ({type_b}) 🟠"})
-    
-    if not decay_data:
-        st.warning("⚠️ No time decay data to plot (Contracts might be expired or invalid dates).")
-    else:
-        st.altair_chart(alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(x='Date:T', y='Value:Q', color='Strategy').properties(height=350).interactive(), use_container_width=True)
+    if not decay_data: st.warning("⚠️ No time decay data.")
+    else: st.altair_chart(alt.Chart(pd.DataFrame(decay_data)).mark_line(strokeWidth=3).encode(x='Date:T', y='Value:Q', color='Strategy').properties(height=350).interactive(), use_container_width=True)
 
-    # Q&A
     st.markdown("---")
     if "compare_ai_response" not in st.session_state: st.session_state["compare_ai_response"] = ""
     comp_q = st.text_input("Ask a question about comparisons...", key="comp_q")
@@ -316,11 +298,7 @@ with tab_dashboard:
             df_c = calculate_dss_data(sel)
             if df_c is not None:
                 df_m = df_c.melt('Date', value_vars=['DSS','Signal'], var_name='Line', value_name='Value')
-                chart = alt.Chart(df_m).mark_line().encode(
-                    x=alt.X('Date:T', title='Date (Daily)'), 
-                    y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), 
-                    color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))
-                ).properties(height=350)
+                chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
 
 # =========================================================
@@ -372,145 +350,190 @@ with tab_catalyst:
         tick = yf.Ticker(cat_sym)
         st.write("---")
         
-        # 1. EARNINGS & MAX PAIN (Market Mechanics)
-        st.markdown("### 1. Market Mechanics (Earnings & Max Pain)")
+        st.markdown("### 1. Market Mechanics")
         col_m1, col_m2 = st.columns(2)
-        
-        # Robust Earnings Fetch
         with col_m1:
             try:
                 next_earn = None
                 cal = tick.calendar
-                # Try finding in Calendar
                 if isinstance(cal, dict) and 'Earnings Date' in cal: next_earn = cal['Earnings Date'][0]
                 elif isinstance(cal, pd.DataFrame) and not cal.empty: next_earn = cal.iloc[0][0]
-                
-                # Try finding in get_earnings_dates
                 if not next_earn:
                     try:
                         dates = tick.get_earnings_dates(limit=3)
-                        if dates is not None and not dates.empty:
-                            # Filter only dates in future
-                            future_dates = dates.index[dates.index > pd.Timestamp.now()]
-                            if not future_dates.empty: next_earn = future_dates[-1] # Take furthest confirmed
+                        if dates is not None:
+                            fut = dates.index[dates.index > pd.Timestamp.now()]
+                            if not fut.empty: next_earn = fut[-1]
                     except: pass
-
-                # Logic: If date is in past, add 90 days estimate
-                earning_label = "Confirmed"
+                label = "Confirmed"
                 if next_earn:
-                    edate = pd.to_datetime(next_earn).date()
-                    if edate < date.today():
-                        edate = edate + timedelta(days=90) # Estimate next qtr
-                        earning_label = "Estimated (Calc)"
-                    
-                    days = (edate - date.today()).days
-                    st.metric(f"Next Earnings ({earning_label})", edate.strftime('%Y-%m-%d'), f"{days} Days")
-                else:
-                    st.metric("Next Earnings", "N/A", "Check Broker")
-            except: st.metric("Next Earnings", "N/A", "Data Error")
+                    ed = pd.to_datetime(next_earn).date()
+                    if ed < date.today():
+                        ed += timedelta(days=90)
+                        label = "Est."
+                    st.metric(f"Earnings ({label})", ed.strftime('%Y-%m-%d'), f"{(ed-date.today()).days} Days")
+                else: st.metric("Earnings", "N/A")
+            except: st.metric("Earnings", "N/A")
 
-        # Max Pain Calc
         with col_m2:
             try:
                 dates = tick.options
                 if dates:
-                    chain = tick.option_chain(dates[0]) # Nearest expiry
-                    full_chain = pd.concat([chain.calls.assign(type='call'), chain.puts.assign(type='put')])
-                    mp = calculate_max_pain(full_chain)
+                    chain = tick.option_chain(dates[0])
+                    full = pd.concat([chain.calls.assign(type='call'), chain.puts.assign(type='put')])
+                    mp = calculate_max_pain(full)
                     curr = tick.history(period="1d")['Close'].iloc[-1]
-                    st.metric("Max Pain (Nearest)", f"${mp:.2f}", f"Diff: ${curr - mp:.2f}")
-                else: st.metric("Max Pain", "N/A", "No Options")
-            except: st.metric("Max Pain", "N/A", "Data Error")
+                    st.metric("Max Pain", f"${mp:.2f}", f"Diff: ${curr - mp:.2f}")
+                else: st.metric("Max Pain", "N/A")
+            except: st.metric("Max Pain", "N/A")
 
-        # 2. DMI OSCILLATOR (Trend Monitor)
         st.markdown("---")
-        st.markdown("### 2. Trend Monitor (DMI Oscillator)")
+        st.markdown("### 2. DMI Trend")
         try:
             hist = tick.history(period="3mo")
             if not hist.empty:
-                dmi_df = calculate_dmi(hist)
-                last = dmi_df.iloc[-1]
-                
+                dmi = calculate_dmi(hist)
+                last = dmi.iloc[-1]
                 c1, c2, c3 = st.columns(3)
-                c1.metric("+DI (Blue)", f"{last['+DI']:.2f}")
-                c2.metric("-DI (Orange)", f"{last['-DI']:.2f}")
-                c3.metric("ADX (Strength)", f"{last['ADX']:.2f}")
+                c1.metric("+DI", f"{last['+DI']:.2f}")
+                c2.metric("-DI", f"{last['-DI']:.2f}")
+                c3.metric("ADX", f"{last['ADX']:.2f}")
                 
-                # Signal Logic
-                if last['+DI'] > last['-DI']:
-                    st.success("✅ **BULLISH TREND:** +DI is above -DI.")
-                else:
-                    st.error("📉 **BEARISH TREND:** -DI is above +DI.")
-                
-                # Plot
-                plot_data = dmi_df[['+DI', '-DI', 'ADX']].reset_index().melt('Date', var_name='Indicator', value_name='Value')
-                chart = alt.Chart(plot_data).mark_line().encode(
-                    x='Date:T', 
-                    y='Value:Q', 
-                    color=alt.Color('Indicator', scale=alt.Scale(domain=['+DI', '-DI', 'ADX'], range=['blue', 'orange', 'black']))
-                ).properties(height=300)
+                plot = dmi[['+DI', '-DI', 'ADX']].reset_index().melt('Date', var_name='I', value_name='V')
+                chart = alt.Chart(plot).mark_line().encode(x='Date:T', y='V:Q', color=alt.Color('I', scale=alt.Scale(range=['blue', 'orange', 'black']))).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
-        except Exception as e: st.error(f"DMI Calc Error: {e}")
+        except Exception as e: st.error(f"DMI Error: {e}")
 
-        # 3. NEWS FEED (STRICT FILTER)
         st.markdown("---")
-        st.markdown("### 3. Recent News (Filtered)")
+        st.markdown("### 3. News (Filtered)")
         try:
             news = tick.news
-            valid_news_count = 0
             if news:
+                vc = 0
                 for n in news:
-                    # STRICT FILTER: Skip if No Title or Bad Date
-                    title = n.get('title', '')
+                    t = n.get('title', '')
                     ts = n.get('providerPublishTime', 0)
-                    if not title or title == "No Title" or ts == 0: continue
-                    
-                    pub = n.get('publisher', 'Unknown')
-                    link = n.get('link', '#')
-                    date_str = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
-                    
-                    with st.expander(f"📰 {date_str} | {title}"):
-                        st.write(f"**Source:** {pub}")
-                        if link != '#': st.write(f"[Read Article]({link})")
-                    valid_news_count += 1
-            
-            if valid_news_count == 0:
-                st.info("No recent news articles found (Feed returned empty or invalid data).")
-        except: st.info("News feed unavailable.")
+                    if not t or t == "No Title" or ts == 0: continue
+                    dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    with st.expander(f"📰 {dt} | {t}"): st.write(f"[Link]({n.get('link','#')})")
+                    vc += 1
+                if vc == 0: st.info("No valid news.")
+            else: st.info("No news.")
+        except: st.info("News unavailable.")
 
-    # 4. CHECKLIST (Preserved & Fixed Typo)
     st.markdown("---")
-    st.subheader("✅ The 6-Point Trade Checklist")
-    
+    st.subheader("✅ 6-Point Checklist")
     if st.button("🚀 Run Checklist"):
         tick = yf.Ticker(cat_sym)
-        checklist_data = []
+        data = []
         try:
             hist = tick.history(period="1mo")
             if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
+                cp = hist['Close'].iloc[-1]
                 gap = abs(hist['Open'].iloc[-1] - hist['Close'].iloc[-2])
-                status_gap = "⚠️ Careful" if gap > 1.00 else "✅ Pass"
-                checklist_data.append({"Check": "1. Price Gap", "Value": f"${gap:.2f}", "Result": status_gap})
+                data.append({"Check": "1. Gap", "Val": f"${gap:.2f}", "Res": "✅" if gap < 1 else "⚠️"})
                 
                 vol = hist['Volume'].iloc[-1]
-                avg_vol = hist['Volume'].mean()
-                # FIXED TYPO HERE (1000000)
-                checklist_data.append({"Check": "2. Volume", "Value": f"{vol/1000000:.1f}M", "Result": "✅ Pass" if vol > avg_vol else "⚠️ Low"})
+                av = hist['Volume'].mean()
+                data.append({"Check": "2. Vol", "Val": f"{vol/1000000:.1f}M", "Res": "✅" if vol > av else "⚠️"})
                 
                 try:
                     dates = tick.options
                     if dates:
                         chain = tick.option_chain(dates[0]).calls
-                        contract = chain[chain['strike'] == strike_price]
-                        if not contract.empty:
-                            iv = contract.iloc[0]['impliedVolatility']
-                            delta = calculate_delta(current_price, strike_price, 0.1, risk_free_rate, iv)
-                            checklist_data.append({"Check": "3. IV Check", "Value": f"{iv*100:.1f}%", "Result": "ℹ️ Info"})
-                            checklist_data.append({"Check": "4. Rule of 16", "Value": f"${current_price*(iv/16):.2f}", "Result": "ℹ️ Exp Move"})
-                            checklist_data.append({"Check": "5. Vol/OI", "Value": f"{contract.iloc[0]['volume']}/{contract.iloc[0]['openInterest']}", "Result": "ℹ️ Ratio"})
-                            checklist_data.append({"Check": "6. Delta", "Value": f"{delta:.2f}", "Result": "✅ Pass" if delta > 0.3 else "⚠️ Low"})
+                        con = chain[chain['strike'] == strike_price]
+                        if not con.empty:
+                            iv = con.iloc[0]['impliedVolatility']
+                            delta = calculate_delta(cp, strike_price, 0.1, risk_free_rate, iv)
+                            data.append({"Check": "3. IV", "Val": f"{iv*100:.1f}%", "Res": "ℹ️"})
+                            data.append({"Check": "4. Rule 16", "Val": f"${cp*(iv/16):.2f}", "Res": "ℹ️"})
+                            data.append({"Check": "5. Vol/OI", "Val": f"{con.iloc[0]['volume']}/{con.iloc[0]['openInterest']}", "Res": "ℹ️"})
+                            data.append({"Check": "6. Delta", "Val": f"{delta:.2f}", "Res": "✅" if delta > 0.3 else "⚠️"})
                 except: pass
-                
-                st.dataframe(pd.DataFrame(checklist_data), use_container_width=True)
+                st.dataframe(pd.DataFrame(data), use_container_width=True)
         except: st.error("Checklist Error")
+
+# =========================================================
+#  TAB 5: OPTION CHAIN VISUALIZER (NEW!)
+# =========================================================
+with tab_ocr:
+    st.subheader("📸 Option Chain Visualizer")
+    st.markdown("Upload a screenshot of an option chain (Calls on Left, Puts on Right).")
+    
+    uploaded_img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
+    
+    if uploaded_img:
+        image = Image.open(uploaded_img)
+        st.image(image, caption="Uploaded Option Chain", use_container_width=True)
+        
+        if st.button("⚡ Extract & Graph"):
+            if not api_key:
+                st.error("Missing Gemini API Key")
+            else:
+                with st.spinner("Gemini is reading the numbers..."):
+                    try:
+                        genai.configure(api_key=api_key)
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        prompt = """
+                        Look at this option chain image. 
+                        Extract the data for every visible row into a JSON format.
+                        Return ONLY a raw JSON list of objects with these keys:
+                        [
+                          {"strike": 100.0, "call_vol": 500, "put_vol": 200, "call_oi": 1000, "put_oi": 800},
+                          ...
+                        ]
+                        Ensure numbers are integers or floats. If a value is '-', '0', or empty, treat it as 0.
+                        Do not include markdown formatting like ```json. Just the raw list.
+                        """
+                        
+                        response = model.generate_content([prompt, image])
+                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                        
+                        try:
+                            data = json.loads(clean_text)
+                            df_chain = pd.DataFrame(data)
+                            
+                            if not df_chain.empty:
+                                st.success(f"Successfully extracted {len(df_chain)} rows!")
+                                
+                                # --- 1. VOLUME BATTLE (Dual Bar) ---
+                                st.subheader("📊 Volume Battle: Calls vs Puts")
+                                # Melt for Altair
+                                df_vol = df_chain.melt(id_vars=['strike'], value_vars=['call_vol', 'put_vol'], var_name='Type', value_name='Volume')
+                                df_vol['Type'] = df_vol['Type'].replace({'call_vol': 'Calls 🟢', 'put_vol': 'Puts 🔴'})
+                                
+                                chart_vol = alt.Chart(df_vol).mark_bar().encode(
+                                    x=alt.X('strike:O', title='Strike Price'),
+                                    y=alt.Y('Volume:Q'),
+                                    color=alt.Color('Type', scale=alt.Scale(domain=['Calls 🟢', 'Puts 🔴'], range=['#00FF00', '#FF0000'])),
+                                    tooltip=['strike', 'Type', 'Volume']
+                                ).properties(height=400)
+                                st.altair_chart(chart_vol, use_container_width=True)
+                                
+                                # --- 2. OPEN INTEREST WALLS ---
+                                st.subheader("🧱 Open Interest Walls")
+                                df_oi = df_chain.melt(id_vars=['strike'], value_vars=['call_oi', 'put_oi'], var_name='Type', value_name='Open Interest')
+                                df_oi['Type'] = df_oi['Type'].replace({'call_oi': 'Call OI 🔵', 'put_oi': 'Put OI 🟠'})
+                                
+                                chart_oi = alt.Chart(df_oi).mark_bar().encode(
+                                    x=alt.X('strike:O', title='Strike Price'),
+                                    y=alt.Y('Open Interest:Q'),
+                                    color=alt.Color('Type', scale=alt.Scale(domain=['Call OI 🔵', 'Put OI 🟠'], range=['#1f77b4', '#ff7f0e'])),
+                                    tooltip=['strike', 'Type', 'Open Interest']
+                                ).properties(height=400)
+                                st.altair_chart(chart_oi, use_container_width=True)
+                                
+                                # Show Raw Data
+                                with st.expander("View Raw Extracted Data"):
+                                    st.dataframe(df_chain)
+                                    
+                            else:
+                                st.error("Gemini returned empty data. Please ensure the screenshot is clear.")
+                                
+                        except json.JSONDecodeError:
+                            st.error("Failed to parse Gemini response. Try again.")
+                            st.write(response.text) # Debug
+                            
+                    except Exception as e:
+                        st.error(f"Error: {e}")
