@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
+import altair as305 alt
 from datetime import date, timedelta, datetime
 from scipy.stats import norm
 from PIL import Image
@@ -302,7 +302,7 @@ with tab_dashboard:
                 chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
 st.markdown("---")
-    st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
+st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
     
     # --- 1. Math Helper for Gamma (Add this inside the tab or at top of file) ---
     def calculate_gamma(S, K, T, r, sigma):
@@ -562,6 +562,7 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
 
 
