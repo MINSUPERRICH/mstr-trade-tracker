@@ -343,34 +343,47 @@ with tab_ai:
 #  TAB 4: CATALYST, DMI & CHECKLIST
 # =========================================================
 with tab_catalyst:
-    # ... inside tab_catalyst ...
-    
     st.markdown("---")
     st.markdown("### 3. 🔴 Real-Time News (Google)")
     
-    # 1. Import the library (put this at top of file normally, but works here too)
+    # 1. Import the library
     from GoogleNews import GoogleNews 
     
     # 2. Setup the search
-    # We search for the Symbol + "Bitcoin" to get relevant context
     news_client = GoogleNews(period='1d') # '1d' = last 24 hours
-    news_client.search(f"{cat_sym} stock bitcoin")
-    results = news_client.result()
     
-    if results:
-        # Sort by most recent first (based on datetime if available, otherwise index)
-        for article in results[:5]: # Show top 5
-            title = article.get('title')
-            date_posted = article.get('date') # e.g., "5 mins ago"
-            link = article.get('link')
-            media = article.get('media') # Publisher name
-            
-            if link:
-                with st.expander(f"⏰ {date_posted} | {media}: {title}"):
-                    st.write(f"[Read Article]({link})")
+    # DYNAMIC SEARCH LOGIC:
+    # If the symbol is crypto-related (MSTR, COIN, HOOD, MARA), add "Bitcoin" to context.
+    # Otherwise, just search the stock news.
+    crypto_stocks = ['MSTR', 'COIN', 'MARA', 'RIOT', 'CLSK', 'HUT', 'BITF', 'IBIT', 'MSTU']
+    
+    if symbol in crypto_stocks:
+        search_query = f"{symbol} stock bitcoin"
     else:
-        st.info("No recent news found in the last 24 hours.")    
-
+        search_query = f"{symbol} stock news"
+        
+    st.write(f"🔎 *Searching for: '{search_query}'*") # Debug line so you see what it searches
+    
+    try:
+        news_client.search(search_query)
+        results = news_client.result()
+        
+        if results:
+            for article in results[:5]: # Show top 5
+                title = article.get('title')
+                date_posted = article.get('date') 
+                link = article.get('link')
+                media = article.get('media') 
+                
+                if link:
+                    with st.expander(f"⏰ {date_posted} | {media}: {title}"):
+                        st.write(f"[Read Article]({link})")
+        else:
+            st.info(f"No recent news found for {symbol}.")
+            
+    except Exception as e:
+        st.error(f"News Error: {e}")
+  
 # =========================================================
 #  TAB 5: OPTION CHAIN VISUALIZER (NEW!)
 # =========================================================
@@ -455,5 +468,6 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
 
