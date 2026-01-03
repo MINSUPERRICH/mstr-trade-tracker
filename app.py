@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as305 alt
+import altair as alt
 from datetime import date, timedelta, datetime
 from scipy.stats import norm
 from PIL import Image
@@ -562,6 +562,7 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
 
 
