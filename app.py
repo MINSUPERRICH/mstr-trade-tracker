@@ -135,7 +135,8 @@ symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
 current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
 strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
 expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
-purchase_date = st.sidebar.date_input("Purchase Date", value=date(2024, 12, 24))
+# Use date.today() so it is always current
+purchase_date = st.sidebar.date_input("Purchase Date", value=date.today())
 entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
 implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
 risk_free_rate = 0.045
@@ -300,6 +301,99 @@ with tab_dashboard:
                 df_m = df_c.melt('Date', value_vars=['DSS','Signal'], var_name='Line', value_name='Value')
                 chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
+st.markdown("---")
+    st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
+    
+    # --- 1. Math Helper for Gamma (Add this inside the tab or at top of file) ---
+    def calculate_gamma(S, K, T, r, sigma):
+        try:
+            if T <= 0 or sigma <= 0: return 0
+            d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+            return norm.pdf(d1) / (S * sigma * np.sqrt(T))
+        except: return 0
+
+    if st.button("🎲 Scan Nearest Expiry Chain"):
+        try:
+            tick = yf.Ticker(symbol)
+            dates = tick.options
+            
+            if not dates:
+                st.error(f"No options data found for {symbol}")
+            else:
+                # 1. Get Earliest Expiration
+                target_date = dates[0]
+                st.info(f"📅 Analyzing Expiry: **{target_date}**")
+                
+                # 2. Get Data
+                chain = tick.option_chain(target_date)
+                # Combine calls and puts for a full view, or just do calls for now (usually more relevant for MSTR upside)
+                # Let's do CALLS for the main view to keep it clean
+                df = chain.calls.copy()
+                
+                # 3. Calculate Metrics
+                current_price = tick.history(period="1d")['Close'].iloc[-1]
+                
+                scanner_data = []
+                
+                for index, row in df.iterrows():
+                    strike = row['strike']
+                    vol = row['volume'] if row['volume'] > 0 else 0
+                    oi = row['openInterest'] if row['openInterest'] > 0 else 1 # Avoid div/0
+                    iv = row['impliedVolatility']
+                    
+                    # Volume / OI Ratio
+                    vol_oi_ratio = vol / oi
+                    
+                    # Moneyness % (Negative = OTM, Positive = ITM)
+                    moneyness = ((current_price - strike) / strike) * 100
+                    
+                    # Time to expiry in years
+                    days_to_exp = (pd.to_datetime(target_date) - pd.Timestamp.now()).days
+                    t_years = max(days_to_exp / 365.0, 0.001)
+                    
+                    # Greeks
+                    delta = calculate_delta(current_price, strike, t_years, risk_free_rate, iv, 'call')
+                    gamma = calculate_gamma(current_price, strike, t_years, risk_free_rate, iv)
+                    
+                    scanner_data.append({
+                        "Strike": strike,
+                        "Price": f"${current_price:.2f}",
+                        "Type": "Call",
+                        "Vol": int(vol),
+                        "OI": int(oi),
+                        "Vol/OI": round(vol_oi_ratio, 2),
+                        "IV": f"{iv*100:.1f}%",
+                        "Delta": round(delta, 2),
+                        "Gamma": round(gamma, 4),
+                        "Moneyness": f"{moneyness:.1f}%"
+                    })
+                
+                # 4. Create DataFrame & Sort
+                df_scan = pd.DataFrame(scanner_data)
+                
+                # Filter: Only show strikes reasonably close to price (e.g., within 30%) to reduce noise
+                # You can remove this filter if you want to see EVERYTHING
+                df_scan['Abs_Mon'] = df_scan['Moneyness'].str.strip('%').astype(float).abs()
+                df_scan = df_scan[df_scan['Abs_Mon'] < 40].drop(columns=['Abs_Mon'])
+                
+                # Sort by Volume/OI Ratio (High activity first)
+                df_scan = df_scan.sort_values(by="Vol/OI", ascending=False).reset_index(drop=True)
+
+                # 5. Display with Highlights
+                st.write("🔥 **Top Strikes by Volume/OI Velocity** (Smart Money Tracking)")
+                
+                def highlight_hot(val):
+                    color = '#1c4f2a' if val > 2.0 else '' # Dark green for high ratio
+                    return f'background-color: {color}'
+                
+                st.dataframe(
+                    df_scan.style.applymap(highlight_hot, subset=['Vol/OI']),
+                    use_container_width=True,
+                    height=500
+                )
+                
+        except Exception as e:
+            st.error(f"Scanner Error: {e}")
 
 # =========================================================
 #  TAB 3: AI ANALYST
@@ -468,6 +562,7 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
 
 
