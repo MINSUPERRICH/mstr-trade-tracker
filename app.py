@@ -473,7 +473,7 @@ with tab_ocr:
                 with st.spinner("Gemini is reading the numbers..."):
                     try:
                         genai.configure(api_key=api_key)
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        model = genai.GenerativeModel('gemini-2.0-flash')
                         
                         prompt = """
                         Look at this option chain image. 
@@ -537,3 +537,4 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
