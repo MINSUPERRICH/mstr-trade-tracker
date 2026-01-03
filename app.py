@@ -343,115 +343,33 @@ with tab_ai:
 #  TAB 4: CATALYST, DMI & CHECKLIST
 # =========================================================
 with tab_catalyst:
-    st.subheader("📅 Market Mechanics & Checklist")
-    cat_sym = st.text_input("Enter Symbol to Check:", value=symbol, key="cat_sym")
+    # ... inside tab_catalyst ...
     
-    if st.button("🔎 Run Analysis"):
-        tick = yf.Ticker(cat_sym)
-        st.write("---")
-        
-        st.markdown("### 1. Market Mechanics")
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            try:
-                next_earn = None
-                cal = tick.calendar
-                if isinstance(cal, dict) and 'Earnings Date' in cal: next_earn = cal['Earnings Date'][0]
-                elif isinstance(cal, pd.DataFrame) and not cal.empty: next_earn = cal.iloc[0][0]
-                if not next_earn:
-                    try:
-                        dates = tick.get_earnings_dates(limit=3)
-                        if dates is not None:
-                            fut = dates.index[dates.index > pd.Timestamp.now()]
-                            if not fut.empty: next_earn = fut[-1]
-                    except: pass
-                label = "Confirmed"
-                if next_earn:
-                    ed = pd.to_datetime(next_earn).date()
-                    if ed < date.today():
-                        ed += timedelta(days=90)
-                        label = "Est."
-                    st.metric(f"Earnings ({label})", ed.strftime('%Y-%m-%d'), f"{(ed-date.today()).days} Days")
-                else: st.metric("Earnings", "N/A")
-            except: st.metric("Earnings", "N/A")
-
-        with col_m2:
-            try:
-                dates = tick.options
-                if dates:
-                    chain = tick.option_chain(dates[0])
-                    full = pd.concat([chain.calls.assign(type='call'), chain.puts.assign(type='put')])
-                    mp = calculate_max_pain(full)
-                    curr = tick.history(period="1d")['Close'].iloc[-1]
-                    st.metric("Max Pain", f"${mp:.2f}", f"Diff: ${curr - mp:.2f}")
-                else: st.metric("Max Pain", "N/A")
-            except: st.metric("Max Pain", "N/A")
-
-        st.markdown("---")
-        st.markdown("### 2. DMI Trend")
-        try:
-            hist = tick.history(period="3mo")
-            if not hist.empty:
-                dmi = calculate_dmi(hist)
-                last = dmi.iloc[-1]
-                c1, c2, c3 = st.columns(3)
-                c1.metric("+DI", f"{last['+DI']:.2f}")
-                c2.metric("-DI", f"{last['-DI']:.2f}")
-                c3.metric("ADX", f"{last['ADX']:.2f}")
-                
-                plot = dmi[['+DI', '-DI', 'ADX']].reset_index().melt('Date', var_name='I', value_name='V')
-                chart = alt.Chart(plot).mark_line().encode(x='Date:T', y='V:Q', color=alt.Color('I', scale=alt.Scale(range=['blue', 'orange', 'black']))).properties(height=300)
-                st.altair_chart(chart, use_container_width=True)
-        except Exception as e: st.error(f"DMI Error: {e}")
-
-        st.markdown("---")
-        st.markdown("### 3. News (Filtered)")
-        try:
-            news = tick.news
-            if news:
-                vc = 0
-                for n in news:
-                    t = n.get('title', '')
-                    ts = n.get('providerPublishTime', 0)
-                    if not t or t == "No Title" or ts == 0: continue
-                    dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
-                    with st.expander(f"📰 {dt} | {t}"): st.write(f"[Link]({n.get('link','#')})")
-                    vc += 1
-                if vc == 0: st.info("No valid news.")
-            else: st.info("No news.")
-        except: st.info("News unavailable.")
-
     st.markdown("---")
-    st.subheader("✅ 6-Point Checklist")
-    if st.button("🚀 Run Checklist"):
-        tick = yf.Ticker(cat_sym)
-        data = []
-        try:
-            hist = tick.history(period="1mo")
-            if not hist.empty:
-                cp = hist['Close'].iloc[-1]
-                gap = abs(hist['Open'].iloc[-1] - hist['Close'].iloc[-2])
-                data.append({"Check": "1. Gap", "Val": f"${gap:.2f}", "Res": "✅" if gap < 1 else "⚠️"})
-                
-                vol = hist['Volume'].iloc[-1]
-                av = hist['Volume'].mean()
-                data.append({"Check": "2. Vol", "Val": f"{vol/1000000:.1f}M", "Res": "✅" if vol > av else "⚠️"})
-                
-                try:
-                    dates = tick.options
-                    if dates:
-                        chain = tick.option_chain(dates[0]).calls
-                        con = chain[chain['strike'] == strike_price]
-                        if not con.empty:
-                            iv = con.iloc[0]['impliedVolatility']
-                            delta = calculate_delta(cp, strike_price, 0.1, risk_free_rate, iv)
-                            data.append({"Check": "3. IV", "Val": f"{iv*100:.1f}%", "Res": "ℹ️"})
-                            data.append({"Check": "4. Rule 16", "Val": f"${cp*(iv/16):.2f}", "Res": "ℹ️"})
-                            data.append({"Check": "5. Vol/OI", "Val": f"{con.iloc[0]['volume']}/{con.iloc[0]['openInterest']}", "Res": "ℹ️"})
-                            data.append({"Check": "6. Delta", "Val": f"{delta:.2f}", "Res": "✅" if delta > 0.3 else "⚠️"})
-                except: pass
-                st.dataframe(pd.DataFrame(data), use_container_width=True)
-        except: st.error("Checklist Error")
+    st.markdown("### 3. 🔴 Real-Time News (Google)")
+    
+    # 1. Import the library (put this at top of file normally, but works here too)
+    from GoogleNews import GoogleNews 
+    
+    # 2. Setup the search
+    # We search for the Symbol + "Bitcoin" to get relevant context
+    news_client = GoogleNews(period='1d') # '1d' = last 24 hours
+    news_client.search(f"{cat_sym} stock bitcoin")
+    results = news_client.result()
+    
+    if results:
+        # Sort by most recent first (based on datetime if available, otherwise index)
+        for article in results[:5]: # Show top 5
+            title = article.get('title')
+            date_posted = article.get('date') # e.g., "5 mins ago"
+            link = article.get('link')
+            media = article.get('media') # Publisher name
+            
+            if link:
+                with st.expander(f"⏰ {date_posted} | {media}: {title}"):
+                    st.write(f"[Read Article]({link})")
+    else:
+        st.info("No recent news found in the last 24 hours.")    
 
 # =========================================================
 #  TAB 5: OPTION CHAIN VISUALIZER (NEW!)
@@ -537,4 +455,5 @@ with tab_ocr:
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
+
 
