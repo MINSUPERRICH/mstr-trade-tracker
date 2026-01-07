@@ -293,4 +293,132 @@ with tab_dashboard:
         final_tickers = list(set(final_tickers))
         
         res = []
-        prog = st
+        prog = st.progress(0)
+        
+        for i, t in enumerate(final_tickers):
+            df_h = calculate_dss_data(t)
+            if df_h is not None and not df_h.empty:
+                dss = df_h['DSS'].iloc[-1]
+                stat = "🟢 OVERSOLD" if dss <= 20 else "🔴 OVERBOUGHT" if dss >= 80 else "Neutral"
+                res.append({"Ticker": t, "Price": f"${df_h['Close'].iloc[-1]:,.2f}", "DSS": round(dss, 2), "Status": stat})
+            
+            prog.progress((i+1)/len(final_tickers))
+            if len(final_tickers) > 10:
+                time.sleep(1) 
+        
+        prog.empty()
+        st.session_state["scan_results"] = res
+
+    if st.session_state["scan_results"]:
+        df_r = pd.DataFrame(st.session_state["scan_results"])
+        def color_s(v): return 'background-color: #d4edda; color: green' if 'OVERSOLD' in v else 'background-color: #f8d7da; color: red' if 'OVERBOUGHT' in v else ''
+        st.dataframe(df_r.style.applymap(color_s, subset=['Status']), use_container_width=True)
+        st.download_button("📥 Download Scan CSV", df_r.to_csv().encode('utf-8'), "Scan.csv", "text/csv")
+
+        st.write("---")
+        sel = st.selectbox("Select Ticker to Chart:", [r['Ticker'] for r in st.session_state["scan_results"]])
+        if sel:
+            df_c = calculate_dss_data(sel)
+            if df_c is not None:
+                df_m = df_c.melt('Date', value_vars=['DSS','Signal'], var_name='Line', value_name='Value')
+                chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
+                st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
+    
+    # --- HIGH VELOCITY SCANNER ---
+    st.markdown("---")
+    st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
+
+    if st.button("🎲 Scan Nearest Expiry Chain"):
+        try:
+            tick = yf.Ticker(symbol)
+            dates = tick.options
+            
+            if not dates:
+                st.error(f"No options data found for {symbol}")
+            else:
+                target_date = dates[0]
+                st.info(f"📅 Analyzing Expiry: **{target_date}**")
+                time.sleep(0.5)
+                
+                chain = tick.option_chain(target_date)
+                calls = chain.calls.copy()
+                calls['Type'] = 'Call'
+                puts = chain.puts.copy()
+                puts['Type'] = 'Put'
+                df = pd.concat([calls, puts], ignore_index=True)
+                
+                current_price = tick.history(period="1d")['Close'].iloc[-1]
+                scanner_data = []
+                
+                for index, row in df.iterrows():
+                    strike = row['strike']
+                    vol = row['volume'] if row['volume'] > 0 else 0
+                    oi = row['openInterest'] if row['openInterest'] > 0 else 1 
+                    iv = row['impliedVolatility']
+                    opt_type = row['Type']
+                    vol_oi_ratio = vol / oi
+                    
+                    if opt_type == 'Call':
+                        moneyness = ((current_price - strike) / strike) * 100
+                    else:
+                        moneyness = ((strike - current_price) / current_price) * 100
+                    
+                    days_to_exp = (pd.to_datetime(target_date) - pd.Timestamp.now()).days
+                    t_years = max(days_to_exp / 365.0, 0.001)
+                    
+                    delta = calculate_delta(current_price, strike, t_years, risk_free_rate, iv, opt_type.lower())
+                    gamma = calculate_gamma(current_price, strike, t_years, risk_free_rate, iv)
+                    
+                    scanner_data.append({
+                        "Strike": strike,
+                        "Price": f"${current_price:.2f}",
+                        "Type": opt_type,
+                        "Vol": int(vol),
+                        "OI": int(oi),
+                        "Vol/OI": round(vol_oi_ratio, 2),
+                        "IV": f"{iv*100:.1f}%",
+                        "Delta": round(delta, 2),
+                        "Gamma": round(gamma, 4),
+                        "Moneyness": f"{moneyness:.1f}%"
+                    })
+                
+                df_scan = pd.DataFrame(scanner_data)
+                df_scan['Abs_Mon'] = df_scan['Moneyness'].str.strip('%').astype(float).abs()
+                df_scan = df_scan[df_scan['Abs_Mon'] < 40].drop(columns=['Abs_Mon'])
+                df_scan = df_scan.sort_values(by="Vol/OI", ascending=False).reset_index(drop=True)
+
+                st.write("🔥 **Top Strikes by Volume/OI Velocity** (Smart Money Tracking)")
+                
+                def highlight_hot(val):
+                    if val > 2.0:
+                        return 'background-color: #1c4f2a; color: white; font-weight: bold'
+                    return ''
+                
+                st.dataframe(df_scan.style.applymap(highlight_hot, subset=['Vol/OI']), use_container_width=True, height=500)
+                
+                st.download_button(
+                    label="📥 Download Results (Excel/CSV)",
+                    data=df_scan.to_csv(index=False).encode('utf-8'),
+                    file_name=f"{symbol}_Option_Scan_{target_date}.csv",
+                    mime="text/csv"
+                )
+                
+        except Exception as e:
+            if "Too Many Requests" in str(e) or "429" in str(e):
+                st.error("⚠️ Yahoo Finance Rate Limit Hit. Please wait 1 minute before scanning again.")
+            else:
+                st.error(f"Scanner Error: {e}")
+
+# =========================================================
+#  TAB 3: AI ANALYST
+# =========================================================
+with tab_ai:
+    st.subheader("🤖 AI Chart Analysis")
+    up_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
+    if "ai_analysis_text" not in st.session_state: st.session_state["ai_analysis_text"] = ""
+    if "chart_q_response" not in st.session_state: st.session_state["chart_q_response"] = ""
+
+    if up_files:
+        imgs = [Image.open(f) for f in up_files]
+        st.session_state["last_images"] = imgs
+        cols = st.columns(len(imgs
