@@ -672,4 +672,186 @@ with tab_strategy:
             st.rerun()
         report_data = {"Strategy": strategy, "Strike": k1, "Short Exp": str(t1_date), "Long Exp": str(t2_date), "Short Prem": p1, "Long Prem": p2}
             
-    else
+    else:
+        # Vertical Spreads
+        # Determine Call or Put
+        is_call = "Call" in strategy
+        is_debit = "Debit" in strategy
+        
+        with c1:
+            lbl1 = "Buy (Long)" if is_debit else "Sell (Short)"
+            st.markdown(f"### 🦵 Leg 1: {lbl1}")
+            k1 = st.number_input("Strike 1 ($)", value=sim_price - 5 if is_call else sim_price + 5)
+            p1 = st.number_input("Premium ($)", value=st.session_state.leg1_price, key="p1_v")
+            
+        with c2:
+            lbl2 = "Sell (Short)" if is_debit else "Buy (Long)"
+            st.markdown(f"### 🦵 Leg 2: {lbl2}")
+            k2 = st.number_input("Strike 2 ($)", value=sim_price + 5 if is_call else sim_price - 5)
+            p2 = st.number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
+
+        if st.button("🔮 Estimate Prices"):
+            # Simple assumption: 30 days out
+            ty = 30 / 365.0
+            o_type = 'call' if is_call else 'put'
+            est_p1 = black_scholes(sim_price, k1, ty, risk_free_rate, implied_volatility, o_type)
+            est_p2 = black_scholes(sim_price, k2, ty, risk_free_rate, implied_volatility, o_type)
+            st.session_state.leg1_price = round(est_p1, 2)
+            st.session_state.leg2_price = round(est_p2, 2)
+            st.rerun()
+        report_data = {"Strategy": strategy, "Leg 1 Type": lbl1, "Strike 1": k1, "Prem 1": p1, "Leg 2 Type": lbl2, "Strike 2": k2, "Prem 2": p2}
+
+    st.markdown("---")
+    
+    # 4. Calculate P&L
+    if st.button("🚀 Calculate Profit/Loss"):
+        # Range of prices to simulate (±20%)
+        sim_prices = np.linspace(sim_price * 0.8, sim_price * 1.2, 50)
+        pnl_data = []
+        
+        # --- CALCULATION LOGIC ---
+        if "Calendar" in strategy:
+            # Calendar Logic (Approximate)
+            # Net Debit
+            cost = (p2 - p1) * 100 * sim_qty
+            
+            # Time diff for Long option when Short expires
+            dt_near = (t1_date - date.today()).days / 365.0
+            dt_far = (t2_date - date.today()).days / 365.0
+            remaining_time = dt_far - dt_near
+            
+            for s in sim_prices:
+                # Value of Short at Expiry (Intrinsic)
+                # Assume Call Calendar
+                val_short = max(0, s - k1) 
+                
+                # Value of Long at Short Expiry (Black Scholes estimate)
+                # We assume IV stays same (simplified)
+                val_long = black_scholes(s, k1, remaining_time, risk_free_rate, implied_volatility, 'call')
+                
+                spread_val_at_expiry = (val_long - val_short) * 100 * sim_qty
+                profit = spread_val_at_expiry - cost
+                pnl_data.append({"Price": s, "P&L": profit})
+                
+            max_risk = cost
+            # Max profit is roughly at strike
+            
+        else:
+            # Vertical Logic
+            # Net Debit/Credit
+            if is_debit:
+                net_cost = (p1 - p2) * 100 * sim_qty
+            else:
+                net_credit = (p1 - p2) * 100 * sim_qty # P1 is Short (sold), P2 is Long (bought)
+                
+            for s in sim_prices:
+                # Calculate Intrinsic Values at Expiry
+                if "Bull Call" in strategy:
+                    # Long k1, Short k2
+                    val_l = max(0, s - k1)
+                    val_s = max(0, s - k2)
+                    payoff = (val_l - val_s) * 100 * sim_qty
+                    profit = payoff - net_cost
+                elif "Bear Put" in strategy:
+                    # Long k1 (High), Short k2 (Low) - Wait, usually entered as Put
+                    # K1 is the Strike 1 input. For Bear Put, Buy High Strike (K1), Sell Low (K2)
+                    val_l = max(0, k1 - s)
+                    val_s = max(0, k2 - s)
+                    payoff = (val_l - val_s) * 100 * sim_qty
+                    profit = payoff - net_cost
+                elif "Bear Call" in strategy:
+                    # Credit: Sell K1 (Low), Buy K2 (High)
+                    val_short = max(0, s - k1)
+                    val_long = max(0, s - k2)
+                    loss_on_spread = (val_short - val_long) * 100 * sim_qty
+                    profit = net_credit - loss_on_spread
+                elif "Bull Put" in strategy:
+                    # Credit: Sell K1 (High), Buy K2 (Low)
+                    val_short = max(0, k1 - s)
+                    val_long = max(0, k2 - s)
+                    loss_on_spread = (val_short - val_long) * 100 * sim_qty
+                    profit = net_credit - loss_on_spread
+                    
+                pnl_data.append({"Price": s, "P&L": profit})
+
+        # --- DISPLAY RESULTS ---
+        df_pnl = pd.DataFrame(pnl_data)
+        
+        # Metrics
+        max_p = df_pnl['P&L'].max()
+        max_l = df_pnl['P&L'].min()
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Max Profit", f"${max_p:,.2f}")
+        m2.metric("Max Loss", f"${max_l:,.2f}")
+        
+        # Chart
+        c = alt.Chart(df_pnl).mark_area(
+            line={'color':'white'},
+            color=alt.Gradient(
+                gradient='linear',
+                stops=[alt.GradientStop(color='#FF4B4B', offset=0),
+                       alt.GradientStop(color='#FF4B4B', offset=0.5), # Approx zero line logic needed for perfect coloring
+                       alt.GradientStop(color='#00FF7F', offset=1)],
+                x1=1, x2=1, y1=1, y2=0
+            )
+        ).encode(
+            x=alt.X('Price', title='Stock Price at Expiry'),
+            y=alt.Y('P&L', title='Profit/Loss ($)'),
+            tooltip=['Price', 'P&L']
+        ).properties(height=400)
+        
+        # Add a zero line
+        rule = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color='white').encode(y='y')
+        
+        st.altair_chart(c + rule, use_container_width=True)
+        
+        # --- DOWNLOAD BUTTONS ---
+        st.write("### 💾 Export Analysis")
+        col_d1, col_d2 = st.columns(2)
+        
+        # 1. Download CSV (Excel)
+        with col_d1:
+            st.download_button(
+                label="📥 Download Data (Excel/CSV)",
+                data=df_pnl.to_csv(index=False).encode('utf-8'),
+                file_name=f"{strategy}_Analysis.csv",
+                mime="text/csv"
+            )
+            
+        # 2. Download Report (Word/Doc)
+        # We create a simple HTML file that Word opens gracefully
+        with col_d2:
+            html_report = f"""
+            <html>
+            <head><title>Strategy Report</title></head>
+            <body>
+                <h1>Strategy Report: {strategy}</h1>
+                <p><b>Date:</b> {date.today()}</p>
+                <p><b>Ticker:</b> {symbol}</p>
+                <hr>
+                <h3>Configuration</h3>
+                <ul>
+            """
+            for k, v in report_data.items():
+                html_report += f"<li><b>{k}:</b> {v}</li>"
+            
+            html_report += f"""
+                </ul>
+                <hr>
+                <h3>Outcome</h3>
+                <p><b>Max Profit:</b> ${max_p:,.2f}</p>
+                <p><b>Max Loss:</b> ${max_l:,.2f}</p>
+                <hr>
+                <h3>Strategy Guide</h3>
+                {guide_text.replace('*', '').replace('\n', '<br>')}
+            </body>
+            </html>
+            """
+            
+            st.download_button(
+                label="📥 Download Report (Word/Doc)",
+                data=html_report,
+                file_name=f"{strategy}_Report.doc",
+                mime="application/msword"
+            )
