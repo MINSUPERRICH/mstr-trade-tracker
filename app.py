@@ -138,7 +138,7 @@ def calculate_dss_data(ticker, period=10, ema_period=9):
 # =========================================================
 #  APP LAYOUT
 # =========================================================
-st.title("🚀 MSTR Option Command Center")
+st.title("🚀 MSTR Command Center")
 
 # --- SIDEBAR ---
 st.sidebar.header("🌍 Global Settings")
@@ -584,7 +584,7 @@ with tab_strategy:
         "Bear Call Spread (Credit)",
         "Bull Put Spread (Credit)",
         "Bear Put Spread (Debit)",
-        "Calendar Spread (Long)"
+        "Calendar Spread (Debit)"
     ])
     
     # 2. Strategy Guide (Parsed from CSV)
@@ -593,38 +593,49 @@ with tab_strategy:
     with guide_expander:
         if "Bull Call" in strategy:
             guide_text = """
-            * **Outlook:** Bullish (Stock go UP).
-            * **Setup:** Buy Low Strike Call (Expensive), Sell High Strike Call (Cheap).
-            * **IV Env:** Low IV (L).
-            * **Max Profit:** Width of strikes - Net Debit.
+            * **Outlook:** Bullish (UP) - Breakout above resistance.
+            * **Setup:**
+                * Leg 1 (Buy): Low Strike Call (Expensive, Near Stock Price).
+                * Leg 2 (Sell): High Strike Call (Cheap).
+            * **IV:** Low (We want it to Rise).
+            * **Exit:** Close at +50% profit or if support/resistance break.
             """
         elif "Bear Call" in strategy:
             guide_text = """
-            * **Outlook:** Bearish (Stock going up to resistance/Pivot).
-            * **Setup:** Sell Low Strike Call (Expensive), Buy High Strike Call (Cheap).
-            * **IV Env:** High IV (H).
-            * **Max Profit:** Net Credit Received.
+            * **Outlook:** Bearish/Flat - Reversal at Resistance.
+            * **Setup:**
+                * Leg 1 (Sell): Low Strike Call (Expensive, Near Stock Price).
+                * Leg 2 (Buy): High Strike Call (Cheap).
+            * **IV:** High (We want it to Drop).
+            * **Exit:** Close at +50% profit or reversal.
             """
         elif "Bull Put" in strategy:
             guide_text = """
-            * **Outlook:** Bullish (Stock going down to support/bounce).
-            * **Setup:** Sell High Strike Put (Expensive), Buy Low Strike Put (Cheap).
-            * **IV Env:** High IV (H).
-            * **Max Profit:** Net Credit Received.
+            * **Outlook:** Bullish/Flat - Stock going down to support.
+            * **Setup:**
+                * Leg 1 (Sell): High Strike Put (Expensive, Near Stock Price).
+                * Leg 2 (Buy): Low Strike Put (Cheap).
+            * **IV:** High (We want it to Drop).
+            * **Exit:** Close at +50% profit.
             """
         elif "Bear Put" in strategy:
             guide_text = """
-            * **Outlook:** Bearish (Stock high pivot, going down).
-            * **Setup:** Buy High Strike Put (Expensive), Sell Low Strike Put (Cheap).
-            * **IV Env:** Low IV (L).
-            * **Max Profit:** Width of strikes - Net Debit.
+            * **Outlook:** Bearish/Down - Breakdown below support.
+            * **Setup:**
+                * Leg 1 (Buy): High Strike Put (Expensive, Near Stock Price).
+                * Leg 2 (Sell): Low Strike Put (Cheap).
+            * **IV:** Low (We want it to Rise).
+            * **Exit:** Close at +50% profit or if support/resistance break.
             """
         elif "Calendar" in strategy:
             guide_text = """
-            * **Outlook:** Neutral (Stock Stay/Boxed).
-            * **Setup:** Sell Near Expiration, Buy Far Expiration (Same Strike).
-            * **IV Env:** Low IV (L).
-            * **Profit Source:** Time decay (Theta) of the short option.
+            * **Outlook:** Neutral / Stock Stay (Boxed/Stuck).
+            * **Setup:**
+                * Leg 1 (Sell): Near Expiration.
+                * Leg 2 (Buy): Far Expiration.
+                * Same Strike.
+            * **IV:** Low (We want it to Rise).
+            * **Exit:** Close before earnings. Don't hold through event.
             """
         st.markdown(guide_text)
 
@@ -649,17 +660,20 @@ with tab_strategy:
     if "Calendar" in strategy:
         # Calendar: Same Strike, Diff Exp
         with c1:
-            st.markdown("### 🦵 Leg 1 (Short/Near)")
+            st.markdown("### 🦵 Leg 1 (Sell/Near)")
             k1 = st.number_input("Strike Price", value=sim_price)
             t1_date = st.date_input("Expiration (Near)", value=date.today() + timedelta(days=30))
             p1 = st.number_input("Premium (Price)", value=st.session_state.leg1_price, key="p1")
+            lbl1 = "Sell (Near)"
             
         with c2:
-            st.markdown("### 🦵 Leg 2 (Long/Far)")
+            st.markdown("### 🦵 Leg 2 (Buy/Far)")
             # Strike is same usually
             st.info(f"Strike: ${k1}") 
             t2_date = st.date_input("Expiration (Far)", value=date.today() + timedelta(days=60))
             p2 = st.number_input("Premium (Price)", value=st.session_state.leg2_price, key="p2")
+            lbl2 = "Buy (Far)"
+            k2 = k1 # For logic consistency
             
         # Helper to estimate price
         if st.button("🔮 Estimate Option Prices (Black-Scholes)"):
@@ -674,20 +688,48 @@ with tab_strategy:
             
     else:
         # Vertical Spreads
-        # Determine Call or Put
+        # Determine Call or Put and Buy/Sell logic based on CSV
         is_call = "Call" in strategy
-        is_debit = "Debit" in strategy
+        
+        # Default Logic Mapping based on CSV
+        # Bull Call: Buy Low (Expensive), Sell High (Cheap)
+        # Bear Call: Sell Low (Expensive), Buy High (Cheap)
+        # Bull Put: Sell High (Expensive), Buy Low (Cheap)
+        # Bear Put: Buy High (Expensive), Sell Low (Cheap)
+        
+        if "Bull Call" in strategy:
+            lbl1 = "Buy (Low Strike)"
+            lbl2 = "Sell (High Strike)"
+            def_k1 = sim_price - 5 # ITM
+            def_k2 = sim_price + 5 # OTM
+            is_debit = True
+        elif "Bear Call" in strategy:
+            lbl1 = "Sell (Low Strike)"
+            lbl2 = "Buy (High Strike)"
+            def_k1 = sim_price - 5 # ITM
+            def_k2 = sim_price + 5 # OTM
+            is_debit = False
+        elif "Bull Put" in strategy:
+            lbl1 = "Sell (High Strike)"
+            lbl2 = "Buy (Low Strike)"
+            def_k1 = sim_price + 5 # ITM Put
+            def_k2 = sim_price - 5 # OTM Put
+            is_debit = False
+        elif "Bear Put" in strategy:
+            lbl1 = "Buy (High Strike)"
+            lbl2 = "Sell (Low Strike)"
+            def_k1 = sim_price + 5 # ITM Put
+            def_k2 = sim_price - 5 # OTM Put
+            is_debit = True
         
         with c1:
-            lbl1 = "Buy (Long)" if is_debit else "Sell (Short)"
             st.markdown(f"### 🦵 Leg 1: {lbl1}")
-            k1 = st.number_input("Strike 1 ($)", value=sim_price - 5 if is_call else sim_price + 5)
+            k1 = st.number_input("Strike 1 ($)", value=float(def_k1))
             p1 = st.number_input("Premium ($)", value=st.session_state.leg1_price, key="p1_v")
             
         with c2:
-            lbl2 = "Sell (Short)" if is_debit else "Buy (Long)"
             st.markdown(f"### 🦵 Leg 2: {lbl2}")
-            k2 = st.number_input("Strike 2 ($)", value=sim_price + 5 if is_call else sim_price - 5)
+            k2 = st.number_input("Strike 2 ($)", value=float(def_k2))
             p2 = st.number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
 
         if st.button("🔮 Estimate Prices"):
@@ -712,7 +754,7 @@ with tab_strategy:
         # --- CALCULATION LOGIC ---
         if "Calendar" in strategy:
             # Calendar Logic (Approximate)
-            # Net Debit
+            # Net Debit: Buy (Leg 2) - Sell (Leg 1)
             cost = (p2 - p1) * 100 * sim_qty
             
             # Time diff for Long option when Short expires
@@ -726,47 +768,47 @@ with tab_strategy:
                 val_short = max(0, s - k1) 
                 
                 # Value of Long at Short Expiry (Black Scholes estimate)
-                # We assume IV stays same (simplified)
                 val_long = black_scholes(s, k1, remaining_time, risk_free_rate, implied_volatility, 'call')
                 
                 spread_val_at_expiry = (val_long - val_short) * 100 * sim_qty
                 profit = spread_val_at_expiry - cost
                 pnl_data.append({"Price": s, "P&L": profit})
                 
-            max_risk = cost
-            # Max profit is roughly at strike
-            
         else:
             # Vertical Logic
-            # Net Debit/Credit
+            # P1 is Leg 1 Premium, P2 is Leg 2 Premium
+            # If Debit: Paid P1 - Received P2 (if Leg 1 is Buy) or Paid P1 (if both buy? No spread is Buy/Sell)
+            
+            # Simplified Net Calc based on Debit/Credit Flag
             if is_debit:
+                # Leg 1 is Buy, Leg 2 is Sell
                 net_cost = (p1 - p2) * 100 * sim_qty
             else:
-                net_credit = (p1 - p2) * 100 * sim_qty # P1 is Short (sold), P2 is Long (bought)
+                # Leg 1 is Sell, Leg 2 is Buy
+                net_credit = (p1 - p2) * 100 * sim_qty 
                 
             for s in sim_prices:
                 # Calculate Intrinsic Values at Expiry
                 if "Bull Call" in strategy:
-                    # Long k1, Short k2
+                    # Buy Low (K1), Sell High (K2)
                     val_l = max(0, s - k1)
                     val_s = max(0, s - k2)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Put" in strategy:
-                    # Long k1 (High), Short k2 (Low) - Wait, usually entered as Put
-                    # K1 is the Strike 1 input. For Bear Put, Buy High Strike (K1), Sell Low (K2)
+                    # Buy High (K1), Sell Low (K2) (Puts)
                     val_l = max(0, k1 - s)
                     val_s = max(0, k2 - s)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Call" in strategy:
-                    # Credit: Sell K1 (Low), Buy K2 (High)
+                    # Sell Low (K1), Buy High (K2) (Calls)
                     val_short = max(0, s - k1)
                     val_long = max(0, s - k2)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
                     profit = net_credit - loss_on_spread
                 elif "Bull Put" in strategy:
-                    # Credit: Sell K1 (High), Buy K2 (Low)
+                    # Sell High (K1), Buy Low (K2) (Puts)
                     val_short = max(0, k1 - s)
                     val_long = max(0, k2 - s)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
@@ -791,7 +833,7 @@ with tab_strategy:
             color=alt.Gradient(
                 gradient='linear',
                 stops=[alt.GradientStop(color='#FF4B4B', offset=0),
-                       alt.GradientStop(color='#FF4B4B', offset=0.5), # Approx zero line logic needed for perfect coloring
+                       alt.GradientStop(color='#FF4B4B', offset=0.5), 
                        alt.GradientStop(color='#00FF7F', offset=1)],
                 x1=1, x2=1, y1=1, y2=0
             )
@@ -820,7 +862,6 @@ with tab_strategy:
             )
             
         # 2. Download Report (Word/Doc)
-        # We create a simple HTML file that Word opens gracefully
         with col_d2:
             html_report = f"""
             <html>
