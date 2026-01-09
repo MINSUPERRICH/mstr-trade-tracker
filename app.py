@@ -593,10 +593,13 @@ with tab_strategy:
     with guide_expander:
         if "Bull Call" in strategy:
             guide_text = """
+            * **Weinstein Stage:** Stage 2 (Up) - Rocket Ship 🚀
+            * **Market Look:** Rocket Ship 🚀
+            * **Strategy Logic:** Best ROI for catching a strong trend.
             * **Outlook:** Bullish (UP) - I want stock to go UP.
             * **Setup:**
                 * Leg 1 (Buy): Low Strike Call (Expensive, Near Stock Price). **Pick Delta ~0.70**
-                * Leg 2 (Sell): High Strike Call (Cheap). **Delta ~0.30**
+                * Leg 2 (Sell): High Strike Call (Cheap, High Strike). **Delta ~0.30**
             * **IV:** Low (We want it to Rise).
             * **Time Decay:** Hurts me (Negative).
             * **Entry:** Breakout above resistance.
@@ -604,6 +607,9 @@ with tab_strategy:
             """
         elif "Bear Call" in strategy:
             guide_text = """
+            * **Weinstein Stage:** Stage 3 (Top) - Choppy / Nervous
+            * **Market Look:** Choppy / Nervous
+            * **Strategy Logic:** Safe way to bet "the party is over" without needing a crash yet.
             * **Outlook:** Bearish/Flat - I want stock to go DOWN or stay Flat.
             * **Setup:**
                 * Leg 1 (Sell): Low Strike Call (Expensive, Near Stock Price). **Pick Delta ~0.30**
@@ -615,10 +621,11 @@ with tab_strategy:
             """
         elif "Bull Put" in strategy:
             guide_text = """
+            * **Weinstein Stage:** Stage 2 (Bullish/Support) - Uptrend
             * **Outlook:** Bullish/Flat - I want stock to go UP or stay Flat.
             * **Setup:**
                 * Leg 1 (Sell): High Strike Put (Expensive, Near Stock Price). **Pick Delta ~0.30**
-                * Leg 2 (Buy): Low Strike Put (Cheap). **Delta ~0.10**
+                * Leg 2 (Buy): Low Strike Put (Cheap, Low Strike). **Delta ~0.10**
             * **IV:** High (We want it to Drop).
             * **Time Decay:** Helps me (Positive).
             * **Entry:** Reversal Candle (outside Bar) at support/Resistance.
@@ -626,10 +633,13 @@ with tab_strategy:
             """
         elif "Bear Put" in strategy:
             guide_text = """
+            * **Weinstein Stage:** Stage 4 (Down) - Waterfall 📉
+            * **Market Look:** Waterfall 📉
+            * **Strategy Logic:** Captures the panic selling for big gains.
             * **Outlook:** Bearish/Down - I want stock to go DOWN.
             * **Setup:**
                 * Leg 1 (Buy): High Strike Put (Expensive, Near Stock Price). **Pick Delta ~0.70**
-                * Leg 2 (Sell): Low Strike Put (Cheap). **Delta ~0.30**
+                * Leg 2 (Sell): Low Strike Put (Cheap, Low Strike). **Delta ~0.30**
             * **IV:** Low (We want it to Rise).
             * **Time Decay:** Hurts me (Negative).
             * **Entry:** Breakdown below support.
@@ -637,6 +647,9 @@ with tab_strategy:
             """
         elif "Calendar" in strategy:
             guide_text = """
+            * **Weinstein Stage:** Stage 1 (Base) - Flat / Boring
+            * **Market Look:** Flat / Boring
+            * **Strategy Logic:** You profit if the stock does absolutely nothing.
             * **Outlook:** Neutral / Stock Stay - I want stock to Sit Still/Stagnate.
             * **Setup:**
                 * Leg 1 (Sell): Near Expiration. **Delta ~0.50**
