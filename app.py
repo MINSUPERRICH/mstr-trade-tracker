@@ -584,7 +584,7 @@ with tab_strategy:
         "Bear Call Spread (Credit)",
         "Bull Put Spread (Credit)",
         "Bear Put Spread (Debit)",
-        "Calendar Spread (Debit)"
+        "Calendar Spread (Long)"
     ])
     
     # 2. Strategy Guide (Parsed from CSV)
@@ -593,48 +593,58 @@ with tab_strategy:
     with guide_expander:
         if "Bull Call" in strategy:
             guide_text = """
-            * **Outlook:** Bullish (UP) - Breakout above resistance.
+            * **Outlook:** Bullish (UP) - I want stock to go UP.
             * **Setup:**
-                * Leg 1 (Buy): Low Strike Call (Expensive, Near Stock Price).
-                * Leg 2 (Sell): High Strike Call (Cheap).
+                * Leg 1 (Buy): Low Strike Call (Expensive, Near Stock Price). **Pick Delta ~0.70**
+                * Leg 2 (Sell): High Strike Call (Cheap). **Delta ~0.30**
             * **IV:** Low (We want it to Rise).
+            * **Time Decay:** Hurts me (Negative).
+            * **Entry:** Breakout above resistance.
             * **Exit:** Close at +50% profit or if support/resistance break.
             """
         elif "Bear Call" in strategy:
             guide_text = """
-            * **Outlook:** Bearish/Flat - Reversal at Resistance.
+            * **Outlook:** Bearish/Flat - I want stock to go DOWN or stay Flat.
             * **Setup:**
-                * Leg 1 (Sell): Low Strike Call (Expensive, Near Stock Price).
-                * Leg 2 (Buy): High Strike Call (Cheap).
+                * Leg 1 (Sell): Low Strike Call (Expensive, Near Stock Price). **Pick Delta ~0.30**
+                * Leg 2 (Buy): High Strike Call (Cheap, High Strike). **Delta ~0.10**
             * **IV:** High (We want it to Drop).
-            * **Exit:** Close at +50% profit or reversal.
+            * **Time Decay:** Helps me (Positive).
+            * **Entry:** Reversal Candle (outside Bar) at support/Resistance.
+            * **Exit:** Not specified (Aim for credit decay).
             """
         elif "Bull Put" in strategy:
             guide_text = """
-            * **Outlook:** Bullish/Flat - Stock going down to support.
+            * **Outlook:** Bullish/Flat - I want stock to go UP or stay Flat.
             * **Setup:**
-                * Leg 1 (Sell): High Strike Put (Expensive, Near Stock Price).
-                * Leg 2 (Buy): Low Strike Put (Cheap).
+                * Leg 1 (Sell): High Strike Put (Expensive, Near Stock Price). **Pick Delta ~0.30**
+                * Leg 2 (Buy): Low Strike Put (Cheap). **Delta ~0.10**
             * **IV:** High (We want it to Drop).
+            * **Time Decay:** Helps me (Positive).
+            * **Entry:** Reversal Candle (outside Bar) at support/Resistance.
             * **Exit:** Close at +50% profit.
             """
         elif "Bear Put" in strategy:
             guide_text = """
-            * **Outlook:** Bearish/Down - Breakdown below support.
+            * **Outlook:** Bearish/Down - I want stock to go DOWN.
             * **Setup:**
-                * Leg 1 (Buy): High Strike Put (Expensive, Near Stock Price).
-                * Leg 2 (Sell): Low Strike Put (Cheap).
+                * Leg 1 (Buy): High Strike Put (Expensive, Near Stock Price). **Pick Delta ~0.70**
+                * Leg 2 (Sell): Low Strike Put (Cheap). **Delta ~0.30**
             * **IV:** Low (We want it to Rise).
+            * **Time Decay:** Hurts me (Negative).
+            * **Entry:** Breakdown below support.
             * **Exit:** Close at +50% profit or if support/resistance break.
             """
         elif "Calendar" in strategy:
             guide_text = """
-            * **Outlook:** Neutral / Stock Stay (Boxed/Stuck).
+            * **Outlook:** Neutral / Stock Stay - I want stock to Sit Still/Stagnate.
             * **Setup:**
-                * Leg 1 (Sell): Near Expiration.
-                * Leg 2 (Buy): Far Expiration.
+                * Leg 1 (Sell): Near Expiration. **Delta ~0.50**
+                * Leg 2 (Buy): Far Expiration. **Delta ~0.50**
                 * Same Strike.
             * **IV:** Low (We want it to Rise).
+            * **Time Decay:** Helps me (Positive).
+            * **Entry:** Inside Bar (quiet/coiled).
             * **Exit:** Close before earnings. Don't hold through event.
             """
         st.markdown(guide_text)
@@ -698,26 +708,26 @@ with tab_strategy:
         # Bear Put: Buy High (Expensive), Sell Low (Cheap)
         
         if "Bull Call" in strategy:
-            lbl1 = "Buy (Low Strike)"
-            lbl2 = "Sell (High Strike)"
+            lbl1 = "Buy (Low Strike, Expensive)"
+            lbl2 = "Sell (High Strike, Cheap)"
             def_k1 = sim_price - 5 # ITM
             def_k2 = sim_price + 5 # OTM
             is_debit = True
         elif "Bear Call" in strategy:
-            lbl1 = "Sell (Low Strike)"
-            lbl2 = "Buy (High Strike)"
+            lbl1 = "Sell (Low Strike, Expensive)"
+            lbl2 = "Buy (High Strike, Cheap)"
             def_k1 = sim_price - 5 # ITM
             def_k2 = sim_price + 5 # OTM
             is_debit = False
         elif "Bull Put" in strategy:
-            lbl1 = "Sell (High Strike)"
-            lbl2 = "Buy (Low Strike)"
+            lbl1 = "Sell (High Strike, Expensive)"
+            lbl2 = "Buy (Low Strike, Cheap)"
             def_k1 = sim_price + 5 # ITM Put
             def_k2 = sim_price - 5 # OTM Put
             is_debit = False
         elif "Bear Put" in strategy:
-            lbl1 = "Buy (High Strike)"
-            lbl2 = "Sell (Low Strike)"
+            lbl1 = "Buy (High Strike, Expensive)"
+            lbl2 = "Sell (Low Strike, Cheap)"
             def_k1 = sim_price + 5 # ITM Put
             def_k2 = sim_price - 5 # OTM Put
             is_debit = True
