@@ -324,6 +324,54 @@ with tab_dashboard:
                 chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
     
+    # --- PUT/CALL RATIO SECTION (NEW) ---
+    st.markdown("---")
+    st.subheader("⚖️ Daily Put/Call Ratio (Sentiment)")
+    st.caption("Analyze the volume sentiment for a specific expiration date.")
+    
+    pcr_ticker = yf.Ticker(symbol)
+    try:
+        avail_dates = pcr_ticker.options
+        if avail_dates:
+            pcr_date = st.selectbox("Select Expiration Date for PCR:", avail_dates, index=0)
+            
+            if st.button("📊 Calculate PCR"):
+                with st.spinner("Fetching Option Chain..."):
+                    time.sleep(0.5)
+                    chain = pcr_ticker.option_chain(pcr_date)
+                    calls = chain.calls
+                    puts = chain.puts
+                    
+                    c_vol = calls['volume'].sum() if not calls.empty else 0
+                    p_vol = puts['volume'].sum() if not puts.empty else 0
+                    c_oi = calls['openInterest'].sum() if not calls.empty else 0
+                    p_oi = puts['openInterest'].sum() if not puts.empty else 0
+                    
+                    pcr_vol = p_vol / c_vol if c_vol > 0 else 0
+                    pcr_oi = p_oi / c_oi if c_oi > 0 else 0
+                    
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Total Call Vol", f"{int(c_vol):,}")
+                    c2.metric("Total Put Vol", f"{int(p_vol):,}")
+                    
+                    # Sentiment Coloring
+                    pcr_delta = "off"
+                    if pcr_vol > 1.0: pcr_delta = "inverse" # Bearish/High Puts
+                    else: pcr_delta = "normal" # Bullish
+                    
+                    c3.metric("PCR (Volume)", f"{pcr_vol:.2f}", delta="Bearish" if pcr_vol > 1.0 else "Bullish", delta_color=pcr_delta)
+                    c4.metric("PCR (Open Int)", f"{pcr_oi:.2f}")
+                    
+                    if pcr_vol > 1.0:
+                        st.warning("⚠️ High Put Volume detected relative to Calls. Sentiment is likely Bearish or Hedging.")
+                    elif pcr_vol < 0.7:
+                        st.success("🟢 High Call Volume detected relative to Puts. Sentiment appears Bullish.")
+                    else:
+                        st.info("ℹ️ Put/Call Ratio is neutral (0.7 - 1.0).")
+                        
+    except Exception as e:
+        st.error(f"Could not load options data for PCR: {e}")
+
     # --- HIGH VELOCITY SCANNER ---
     st.markdown("---")
     st.subheader("⚡ High-Velocity Option Scanner (Earliest Expiry)")
