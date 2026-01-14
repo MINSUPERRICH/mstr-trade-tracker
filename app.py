@@ -159,13 +159,14 @@ risk_free_rate = 0.045
 contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
 # --- TABS ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy = st.tabs([
+tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy, tab_lambda = st.tabs([
     "⚔️ Strategy Battle", 
     "📊 Market Dashboard", 
     "📸 Chart Analyst", 
     "📅 Catalyst & Checklist",
     "📸 Option Chain Visualizer",
-    "🧮 Strategy Simulator"
+    "🧮 Strategy Simulator",
+    "⚡ Lambda Analysis"
 ])
 
 # =========================================================
@@ -324,7 +325,7 @@ with tab_dashboard:
                 chart = alt.Chart(df_m).mark_line().encode(x=alt.X('Date:T', title='Date (Daily)'), y=alt.Y('Value', scale=alt.Scale(domain=[0,100])), color=alt.Color('Line', scale=alt.Scale(range=['#1f77b4', '#ff7f0e']))).properties(height=350)
                 st.altair_chart((chart + alt.Chart(pd.DataFrame({'y':[80]})).mark_rule(color='red').encode(y='y') + alt.Chart(pd.DataFrame({'y':[20]})).mark_rule(color='green').encode(y='y')).interactive(), use_container_width=True)
     
-    # --- PUT/CALL RATIO SECTION (NEW) ---
+    # --- PUT/CALL RATIO SECTION ---
     st.markdown("---")
     st.subheader("⚖️ Daily Put/Call Ratio (Sentiment)")
     st.caption("Analyze the volume sentiment for a specific expiration date.")
@@ -967,3 +968,80 @@ with tab_strategy:
                 file_name=f"{strategy}_Report.doc",
                 mime="application/msword"
             )
+
+# =========================================================
+#  TAB 7: LAMBDA ANALYSIS (NEW!)
+# =========================================================
+with tab_lambda:
+    st.header("⚡ Lambda (Option Leverage) Analyzer")
+    st.info("The Indicator for 'Winning Amount vs Premium' per option.")
+    
+    st.markdown(r"""
+    **Lambda ($\lambda$)**, also known as **Gearing**, measures the leverage of an option. 
+    It tells you the percentage change in the option price for a 1% change in the underlying stock price.
+    
+    $$\text{Lambda} = \frac{\text{Stock Price}}{\text{Option Price}} \times \text{Delta}$$
+    """)
+    
+    # Calculate Time to Expiry
+    days_to_exp = (expiration_date - date.today()).days
+    T_years = max(days_to_exp / 365.0, 0.0001)
+    
+    col_l1, col_l2 = st.columns(2)
+    
+    with col_l1:
+        st.subheader("🟢 Call Option Leverage")
+        call_price = black_scholes(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'call')
+        call_delta = calculate_delta(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'call')
+        
+        if call_price > 0.01:
+            call_lambda = (current_stock_price / call_price) * call_delta
+            st.metric("Call Lambda ($\lambda$)", f"{call_lambda:.2f}x", help="A 1% rise in stock price = This % rise in Option Price")
+            st.write(f"If {symbol} moves **+1%**, this Call moves approx **+{call_lambda:.2f}%**")
+        else:
+            st.error("Option Price too low to calculate Lambda")
+
+    with col_l2:
+        st.subheader("🔴 Put Option Leverage")
+        put_price = black_scholes(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'put')
+        put_delta = calculate_delta(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'put')
+        
+        if put_price > 0.01:
+            put_lambda = (current_stock_price / put_price) * put_delta
+            st.metric("Put Lambda ($\lambda$)", f"{put_lambda:.2f}x", help="A 1% drop in stock price = This % rise in Option Price")
+            st.write(f"If {symbol} moves **-1%**, this Put moves approx **+{abs(put_lambda):.2f}%**")
+        else:
+            st.error("Option Price too low to calculate Lambda")
+            
+    st.markdown("---")
+    st.subheader("📈 Leverage Heatmap (Lambda vs Strike)")
+    
+    # Generate Data for Plot
+    strikes = np.linspace(current_stock_price * 0.7, current_stock_price * 1.3, 20)
+    lambda_data = []
+    
+    for k in strikes:
+        # Call
+        c_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
+        c_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
+        c_l = (current_stock_price / c_p * c_d) if c_p > 0.01 else 0
+        
+        # Put
+        p_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
+        p_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
+        p_l = (current_stock_price / p_p * p_d) if p_p > 0.01 else 0
+        
+        lambda_data.append({"Strike": k, "Type": "Call Lambda 🟢", "Value": c_l})
+        lambda_data.append({"Strike": k, "Type": "Put Lambda 🔴", "Value": p_l})
+        
+    df_lam = pd.DataFrame(lambda_data)
+    
+    c_lam = alt.Chart(df_lam).mark_line(point=True).encode(
+        x=alt.X('Strike', title='Strike Price'),
+        y=alt.Y('Value', title='Lambda (Leverage Factor)'),
+        color='Type',
+        tooltip=['Strike', 'Type', 'Value']
+    ).interactive()
+    
+    st.altair_chart(c_lam, use_container_width=True)
+    st.caption("Note: Out-of-the-money options (High strikes for Calls, Low for Puts) have higher leverage/Lambda, but lower probability of profit.")
