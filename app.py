@@ -784,3 +784,364 @@ with tab_strategy:
             is_debit = False
         elif "Bull Put" in strategy:
             lbl1 = "Sell (High Strike, Expensive)"
+            lbl2 = "Buy (Low Strike, Cheap)"
+            def_k1 = sim_price + 5 # ITM Put
+            def_k2 = sim_price - 5 # OTM Put
+            is_debit = False
+        elif "Bear Put" in strategy:
+            lbl1 = "Buy (High Strike, Expensive)"
+            lbl2 = "Sell (Low Strike, Cheap)"
+            def_k1 = sim_price + 5 # ITM Put
+            def_k2 = sim_price - 5 # OTM Put
+            is_debit = True
+        
+        with c1:
+            st.markdown(f"### 🦵 Leg 1: {lbl1}")
+            k1 = st.number_input("Strike 1 ($)", value=float(def_k1))
+            p1 = st.number_input("Premium ($)", value=st.session_state.leg1_price, key="p1_v")
+            
+        with c2:
+            st.markdown(f"### 🦵 Leg 2: {lbl2}")
+            k2 = st.number_input("Strike 2 ($)", value=float(def_k2))
+            # FIXED: Added st. prefix here
+            p2 = st.number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
+
+        if st.button("🔮 Estimate Prices"):
+            # Simple assumption: 30 days out
+            ty = 30 / 365.0
+            o_type = 'call' if is_call else 'put'
+            est_p1 = black_scholes(sim_price, k1, ty, risk_free_rate, implied_volatility, o_type)
+            est_p2 = black_scholes(sim_price, k2, ty, risk_free_rate, implied_volatility, o_type)
+            st.session_state.leg1_price = round(est_p1, 2)
+            st.session_state.leg2_price = round(est_p2, 2)
+            st.rerun()
+        report_data = {"Strategy": strategy, "Leg 1 Type": lbl1, "Strike 1": k1, "Prem 1": p1, "Leg 2 Type": lbl2, "Strike 2": k2, "Prem 2": p2}
+
+    st.markdown("---")
+    
+    # 4. Calculate P&L
+    if st.button("🚀 Calculate Profit/Loss"):
+        # Range of prices to simulate (±20%)
+        sim_prices = np.linspace(sim_price * 0.8, sim_price * 1.2, 50)
+        pnl_data = []
+        
+        # --- CALCULATION LOGIC ---
+        if "Calendar" in strategy:
+            # Calendar Logic (Approximate)
+            # Net Debit: Buy (Leg 2) - Sell (Leg 1)
+            cost = (p2 - p1) * 100 * sim_qty
+            
+            # Time diff for Long option when Short expires
+            dt_near = (t1_date - date.today()).days / 365.0
+            dt_far = (t2_date - date.today()).days / 365.0
+            remaining_time = dt_far - dt_near
+            
+            for s in sim_prices:
+                # Value of Short at Expiry (Intrinsic)
+                # Assume Call Calendar
+                val_short = max(0, s - k1) 
+                
+                # Value of Long at Short Expiry (Black Scholes estimate)
+                val_long = black_scholes(s, k1, remaining_time, risk_free_rate, implied_volatility, 'call')
+                
+                spread_val_at_expiry = (val_long - val_short) * 100 * sim_qty
+                profit = spread_val_at_expiry - cost
+                pnl_data.append({"Price": s, "P&L": profit})
+                
+        else:
+            # Vertical Logic
+            # P1 is Leg 1 Premium, P2 is Leg 2 Premium
+            # If Debit: Paid P1 - Received P2 (if Leg 1 is Buy) or Paid P1 (if both buy? No spread is Buy/Sell)
+            
+            # Simplified Net Calc based on Debit/Credit Flag
+            if is_debit:
+                # Leg 1 is Buy, Leg 2 is Sell
+                net_cost = (p1 - p2) * 100 * sim_qty
+            else:
+                # Leg 1 is Sell, Leg 2 is Buy
+                net_credit = (p1 - p2) * 100 * sim_qty 
+                
+            for s in sim_prices:
+                # Calculate Intrinsic Values at Expiry
+                if "Bull Call" in strategy:
+                    # Buy Low (K1), Sell High (K2)
+                    val_l = max(0, s - k1)
+                    val_s = max(0, s - k2)
+                    payoff = (val_l - val_s) * 100 * sim_qty
+                    profit = payoff - net_cost
+                elif "Bear Put" in strategy:
+                    # Buy High (K1), Sell Low (K2) (Puts)
+                    val_l = max(0, k1 - s)
+                    val_s = max(0, k2 - s)
+                    payoff = (val_l - val_s) * 100 * sim_qty
+                    profit = payoff - net_cost
+                elif "Bear Call" in strategy:
+                    # Sell Low (K1), Buy High (K2) (Calls)
+                    val_short = max(0, s - k1)
+                    val_long = max(0, s - k2)
+                    loss_on_spread = (val_short - val_long) * 100 * sim_qty
+                    profit = net_credit - loss_on_spread
+                elif "Bull Put" in strategy:
+                    # Sell High (K1), Buy Low (K2) (Puts)
+                    val_short = max(0, k1 - s)
+                    val_long = max(0, k2 - s)
+                    loss_on_spread = (val_short - val_long) * 100 * sim_qty
+                    profit = net_credit - loss_on_spread
+                    
+                pnl_data.append({"Price": s, "P&L": profit})
+
+        # --- DISPLAY RESULTS ---
+        df_pnl = pd.DataFrame(pnl_data)
+        
+        # Metrics
+        max_p = df_pnl['P&L'].max()
+        max_l = df_pnl['P&L'].min()
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Max Profit", f"${max_p:,.2f}")
+        m2.metric("Max Loss", f"${max_l:,.2f}")
+        
+        # Chart
+        c = alt.Chart(df_pnl).mark_area(
+            line={'color':'white'},
+            color=alt.Gradient(
+                gradient='linear',
+                stops=[alt.GradientStop(color='#FF4B4B', offset=0),
+                       alt.GradientStop(color='#FF4B4B', offset=0.5), 
+                       alt.GradientStop(color='#00FF7F', offset=1)],
+                x1=1, x2=1, y1=1, y2=0
+            )
+        ).encode(
+            x=alt.X('Price', title='Stock Price at Expiry'),
+            y=alt.Y('P&L', title='Profit/Loss ($)'),
+            tooltip=['Price', 'P&L']
+        ).properties(height=400)
+        
+        # Add a zero line
+        rule = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color='white').encode(y='y')
+        
+        st.altair_chart(c + rule, use_container_width=True)
+        
+        # --- DOWNLOAD BUTTONS ---
+        st.write("### 💾 Export Analysis")
+        col_d1, col_d2 = st.columns(2)
+        
+        # 1. Download CSV (Excel)
+        with col_d1:
+            st.download_button(
+                label="📥 Download Data (Excel/CSV)",
+                data=df_pnl.to_csv(index=False).encode('utf-8'),
+                file_name=f"{strategy}_Analysis.csv",
+                mime="text/csv"
+            )
+            
+        # 2. Download Report (Word/Doc)
+        with col_d2:
+            html_report = f"""
+            <html>
+            <head><title>Strategy Report</title></head>
+            <body>
+                <h1>Strategy Report: {strategy}</h1>
+                <p><b>Date:</b> {date.today()}</p>
+                <p><b>Ticker:</b> {symbol}</p>
+                <hr>
+                <h3>Configuration</h3>
+                <ul>
+            """
+            for k, v in report_data.items():
+                html_report += f"<li><b>{k}:</b> {v}</li>"
+            
+            html_report += f"""
+                </ul>
+                <hr>
+                <h3>Outcome</h3>
+                <p><b>Max Profit:</b> ${max_p:,.2f}</p>
+                <p><b>Max Loss:</b> ${max_l:,.2f}</p>
+                <hr>
+                <h3>Strategy Guide</h3>
+                {guide_text.replace('*', '').replace('\n', '<br>')}
+            </body>
+            </html>
+            """
+            
+            st.download_button(
+                label="📥 Download Report (Word/Doc)",
+                data=html_report,
+                file_name=f"{strategy}_Report.doc",
+                mime="application/msword"
+            )
+
+# =========================================================
+#  TAB 7: LAMBDA ANALYSIS (NEW!)
+# =========================================================
+with tab_lambda:
+    st.header("⚡ Lambda (Option Leverage) Analyzer")
+    st.info("The Indicator for 'Winning Amount vs Premium' per option.")
+    
+    st.markdown(r"""
+    **Lambda ($\lambda$)**, also known as **Gearing**, measures the leverage of an option. 
+    It tells you the percentage change in the option price for a 1% change in the underlying stock price.
+    
+    $$\text{Lambda} = \frac{\text{Stock Price}}{\text{Option Price}} \times \text{Delta}$$
+    """)
+    
+    # Calculate Time to Expiry
+    days_to_exp = (expiration_date - date.today()).days
+    T_years = max(days_to_exp / 365.0, 0.0001)
+    
+    col_l1, col_l2 = st.columns(2)
+    
+    with col_l1:
+        st.subheader("🟢 Call Option Leverage")
+        call_price = black_scholes(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'call')
+        call_delta = calculate_delta(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'call')
+        
+        if call_price > 0.01:
+            call_lambda = (current_stock_price / call_price) * call_delta
+            st.metric("Call Lambda ($\lambda$)", f"{call_lambda:.2f}x", help="A 1% rise in stock price = This % rise in Option Price")
+            st.write(f"If {symbol} moves **+1%**, this Call moves approx **+{call_lambda:.2f}%**")
+        else:
+            st.error("Option Price too low to calculate Lambda")
+
+    with col_l2:
+        st.subheader("🔴 Put Option Leverage")
+        put_price = black_scholes(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'put')
+        put_delta = calculate_delta(current_stock_price, strike_price, T_years, risk_free_rate, implied_volatility, 'put')
+        
+        if put_price > 0.01:
+            put_lambda = (current_stock_price / put_price) * put_delta
+            st.metric("Put Lambda ($\lambda$)", f"{put_lambda:.2f}x", help="A 1% drop in stock price = This % rise in Option Price")
+            st.write(f"If {symbol} moves **-1%**, this Put moves approx **+{abs(put_lambda):.2f}%**")
+        else:
+            st.error("Option Price too low to calculate Lambda")
+            
+    st.markdown("---")
+    st.subheader("📈 Leverage Heatmap (Lambda vs Strike)")
+    
+    # Generate Data for Plot
+    strikes = np.linspace(current_stock_price * 0.7, current_stock_price * 1.3, 20)
+    lambda_data = []
+    
+    for k in strikes:
+        # Call
+        c_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
+        c_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
+        c_l = (current_stock_price / c_p * c_d) if c_p > 0.01 else 0
+        
+        # Put
+        p_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
+        p_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
+        p_l = (current_stock_price / p_p * p_d) if p_p > 0.01 else 0
+        
+        lambda_data.append({"Strike": k, "Type": "Call Lambda 🟢", "Value": c_l})
+        lambda_data.append({"Strike": k, "Type": "Put Lambda 🔴", "Value": p_l})
+        
+    df_lam = pd.DataFrame(lambda_data)
+    
+    c_lam = alt.Chart(df_lam).mark_line(point=True).encode(
+        x=alt.X('Strike', title='Strike Price'),
+        y=alt.Y('Value', title='Lambda (Leverage Factor)'),
+        color='Type',
+        tooltip=['Strike', 'Type', 'Value']
+    ).interactive()
+    
+    st.altair_chart(c_lam, use_container_width=True)
+    st.caption("Note: Out-of-the-money options (High strikes for Calls, Low for Puts) have higher leverage/Lambda, but lower probability of profit.")
+
+# =========================================================
+#  TAB 8: STRIKE COMPARISON (NEW!)
+# =========================================================
+with tab_compare:
+    st.header("📈 Strike Price History Comparison")
+    st.info("Compare the actual historical price action of up to 4 different strike prices.")
+    
+    # 1. Inputs
+    c_comp1, c_comp2, c_comp3 = st.columns(3)
+    
+    ticker_obj = yf.Ticker(symbol)
+    try:
+        all_dates = ticker_obj.options
+        if not all_dates:
+            st.error("No option dates found for this symbol.")
+            st.stop()
+            
+        with c_comp1:
+            comp_exp = st.selectbox("1. Expiration Date", all_dates, index=0, key="comp_exp")
+            
+        with c_comp2:
+            comp_type = st.radio("2. Option Type", ["Call", "Put"], horizontal=True, key="comp_type")
+            
+        # Get Strikes for selected date/type
+        chain = ticker_obj.option_chain(comp_exp)
+        if comp_type == "Call":
+            df_chain = chain.calls
+        else:
+            df_chain = chain.puts
+            
+        available_strikes = sorted(df_chain['strike'].tolist())
+        
+        with c_comp3:
+            selected_strikes = st.multiselect("3. Select Strikes (Max 4)", available_strikes, max_selections=4)
+            
+        # 2. Fetch Data Button
+        if st.button("📉 Compare Strike Histories"):
+            if not selected_strikes:
+                st.warning("Please select at least one strike price.")
+            else:
+                st.write(f"Fetching history for {len(selected_strikes)} contracts...")
+                progress_bar = st.progress(0)
+                
+                # Dictionary to hold dataframes
+                hist_data = {}
+                
+                for idx, strike in enumerate(selected_strikes):
+                    # Find contract symbol
+                    contract_row = df_chain[df_chain['strike'] == strike]
+                    if not contract_row.empty:
+                        contract_symbol = contract_row.iloc[0]['contractSymbol']
+                        
+                        # Download history
+                        try:
+                            # yfinance allows downloading option ticker directly if symbol is known
+                            opt_hist = yf.download(contract_symbol, period="1mo", progress=False)
+                            if not opt_hist.empty:
+                                # Normalize index to string for merging or just keep date
+                                opt_hist = opt_hist.reset_index()
+                                # Keep only Date and Close
+                                sub_df = opt_hist[['Date', 'Close']].copy()
+                                sub_df['Strike'] = f"${strike} {comp_type}"
+                                sub_df.rename(columns={'Close': 'Price'}, inplace=True)
+                                hist_data[strike] = sub_df
+                            else:
+                                st.warning(f"No volume/history found for {contract_symbol}")
+                        except Exception as e:
+                            st.warning(f"Error fetching {contract_symbol}: {e}")
+                    
+                    # Rate limit pause
+                    time.sleep(0.3)
+                    progress_bar.progress((idx + 1) / len(selected_strikes))
+                
+                progress_bar.empty()
+                
+                # Combine Data
+                if hist_data:
+                    combined_df = pd.concat(hist_data.values(), ignore_index=True)
+                    
+                    # Chart
+                    chart = alt.Chart(combined_df).mark_line(point=True).encode(
+                        x=alt.X('Date:T', title='Date'),
+                        y=alt.Y('Price:Q', title='Option Price ($)'),
+                        color=alt.Color('Strike:N', title='Contract'),
+                        tooltip=['Date', 'Strike', 'Price']
+                    ).properties(height=500).interactive()
+                    
+                    st.altair_chart(chart, use_container_width=True)
+                    
+                    # Show raw data
+                    with st.expander("View Raw Price Data"):
+                        st.dataframe(combined_df)
+                else:
+                    st.error("No historical data could be retrieved for selected strikes.")
+                    
+    except Exception as e:
+        st.error(f"Error loading option chain: {e}")
