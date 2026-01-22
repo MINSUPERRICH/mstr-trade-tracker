@@ -15,7 +15,7 @@ import time
 try:
     from GoogleNews import GoogleNews
 except ImportError:
-    pass # Handle gracefully in the tab if missing
+    pass # Handle gracefully if missing
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -113,7 +113,7 @@ def calculate_dmi(df, period=14):
     return df
 
 # --- CACHED FUNCTIONS (Prevents Rate Limiting) ---
-@st.cache_data(ttl=3600) # Cache for 1 hour
+@st.cache_data(ttl=3600) 
 def calculate_dss_data(ticker, period=10, ema_period=9):
     try:
         time.sleep(0.5) 
@@ -140,7 +140,7 @@ def calculate_dss_data(ticker, period=10, ema_period=9):
 # =========================================================
 st.title("🚀 MSTR Command Center")
 
-# --- SIDEBAR ---
+# --- SIDEBAR (SETTINGS) ---
 st.sidebar.header("🌍 Global Settings")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -158,8 +158,10 @@ implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95)
 risk_free_rate = 0.045
 contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
-# --- TABS ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy, tab_lambda, tab_compare = st.tabs([
+# --- SIDEBAR (NAVIGATION) ---
+st.sidebar.markdown("---")
+st.sidebar.header("📍 Navigation")
+page = st.sidebar.radio("Go to:", [
     "⚔️ Strategy Battle", 
     "📊 Market Dashboard", 
     "📸 Chart Analyst", 
@@ -171,9 +173,9 @@ tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy, tab_lambda
 ])
 
 # =========================================================
-#  TAB 1: STRATEGY BATTLE
+#  PAGE 1: STRATEGY BATTLE
 # =========================================================
-with tab_math:
+if page == "⚔️ Strategy Battle":
     st.subheader(f"⚖️ Compare Strategies")
     if st.button("🔄 Reset Scenarios"): st.rerun()
     col_a, col_b = st.columns(2)
@@ -242,7 +244,6 @@ with tab_math:
     df_hm = pd.DataFrame(heatmap_data)
     c = alt.Chart(df_hm).mark_rect().encode(x='Date:O', y='Stock Price:O', color=alt.Color('Profit', scale=alt.Scale(scheme='redyellowgreen', domainMid=0)), tooltip=['Date','Stock Price','Profit']).properties(height=350)
     st.altair_chart(c, use_container_width=True)
-    st.download_button("📥 Download Heatmap", df_hm.to_csv().encode('utf-8'), "Heatmap.csv", "text/csv")
     
     st.markdown("---")
     st.subheader("📉 Time Decay Comparison")
@@ -272,12 +273,11 @@ with tab_math:
             except Exception as e: st.error(str(e))
     if st.session_state["compare_ai_response"]:
         st.info(st.session_state["compare_ai_response"])
-        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
 
 # =========================================================
-#  TAB 2: MARKET DASHBOARD
+#  PAGE 2: MARKET DASHBOARD
 # =========================================================
-with tab_dashboard:
+elif page == "📊 Market Dashboard":
     st.subheader("📊 DSS Bressert Scanner")
     col_in1, col_in2 = st.columns(2)
     with col_in1: text_tickers = st.text_input("Manual Tickers (comma separated)", value="MSTR, BTC-USD, COIN, NVDA, IBIT, MSTU")
@@ -329,7 +329,6 @@ with tab_dashboard:
     # --- PUT/CALL RATIO SECTION ---
     st.markdown("---")
     st.subheader("⚖️ Daily Put/Call Ratio (Sentiment)")
-    st.caption("Analyze the volume sentiment for a specific expiration date.")
     
     pcr_ticker = yf.Ticker(symbol)
     try:
@@ -370,9 +369,7 @@ with tab_dashboard:
                         st.success("🟢 High Call Volume detected relative to Puts. Sentiment appears Bullish.")
                     else:
                         st.info("ℹ️ Put/Call Ratio is neutral (0.7 - 1.0).")
-                        
-    except Exception as e:
-        st.error(f"Could not load options data for PCR: {e}")
+    except: pass
 
     # --- HIGH VELOCITY SCANNER ---
     st.markdown("---")
@@ -452,17 +449,13 @@ with tab_dashboard:
                     file_name=f"{symbol}_Option_Scan_{target_date}.csv",
                     mime="text/csv"
                 )
-                
         except Exception as e:
-            if "Too Many Requests" in str(e) or "429" in str(e):
-                st.error("⚠️ Yahoo Finance Rate Limit Hit. Please wait 1 minute before scanning again.")
-            else:
-                st.error(f"Scanner Error: {e}")
+            st.error(f"Scanner Error: {e}")
 
 # =========================================================
-#  TAB 3: AI ANALYST
+#  PAGE 3: AI ANALYST
 # =========================================================
-with tab_ai:
+elif page == "🤖 AI Chart Analysis":
     st.subheader("🤖 AI Chart Analysis")
     up_files = st.file_uploader("Upload Screenshots...", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
     if "ai_analysis_text" not in st.session_state: st.session_state["ai_analysis_text"] = ""
@@ -495,12 +488,11 @@ with tab_ai:
                 except Exception as e: st.error(str(e))
         if st.session_state["chart_q_response"]:
             st.info(st.session_state["chart_q_response"])
-            st.download_button("📥 Download Q&A", st.session_state["chart_q_response"], "Chart_QA.txt")
 
 # =========================================================
-#  TAB 4: CATALYST, DMI & CHECKLIST
+#  PAGE 4: CATALYST, DMI & CHECKLIST
 # =========================================================
-with tab_catalyst:
+elif page == "📅 Catalyst & Checklist":
     st.markdown("---")
     st.markdown("### 3. 🔴 Real-Time News (Google)")
     
@@ -540,9 +532,9 @@ with tab_catalyst:
         st.warning("GoogleNews library is not installed. News feature disabled.")
   
 # =========================================================
-#  TAB 5: OPTION CHAIN VISUALIZER
+#  PAGE 5: OPTION CHAIN VISUALIZER
 # =========================================================
-with tab_ocr:
+elif page == "📸 Option Chain Visualizer":
     st.subheader("📸 Option Chain Visualizer")
     st.markdown("Upload a screenshot of an option chain (Calls on Left, Puts on Right).")
     
@@ -621,9 +613,9 @@ with tab_ocr:
                         st.error(f"Error: {e}")
 
 # =========================================================
-#  TAB 6: STRATEGY SIMULATOR (NEW!)
+#  PAGE 6: STRATEGY SIMULATOR
 # =========================================================
-with tab_strategy:
+elif page == "🧮 Strategy Simulator":
     st.header("🧮 Options Strategy Profit/Loss Calculator")
     
     st.info("Select a strategy below to load the setup guide and calculator.")
@@ -637,7 +629,7 @@ with tab_strategy:
         "Calendar Spread (Long)"
     ])
     
-    # 2. Strategy Guide (Parsed from CSV)
+    # 2. Strategy Guide
     guide_expander = st.expander(f"📘 Guide: {strategy}", expanded=True)
     guide_text = ""
     with guide_expander:
@@ -741,18 +733,16 @@ with tab_strategy:
             
         with c2:
             st.markdown("### 🦵 Leg 2 (Buy/Far)")
-            # Strike is same usually
             st.info(f"Strike: ${k1}") 
             t2_date = st.date_input("Expiration (Far)", value=date.today() + timedelta(days=60))
             p2 = st.number_input("Premium (Price)", value=st.session_state.leg2_price, key="p2")
             lbl2 = "Buy (Far)"
-            k2 = k1 # For logic consistency
+            k2 = k1 
             
-        # Helper to estimate price
         if st.button("🔮 Estimate Option Prices (Black-Scholes)"):
             t1_y = (t1_date - date.today()).days / 365.0
             t2_y = (t2_date - date.today()).days / 365.0
-            est_p1 = black_scholes(sim_price, k1, t1_y, risk_free_rate, implied_volatility, 'call') # Assume call calendar
+            est_p1 = black_scholes(sim_price, k1, t1_y, risk_free_rate, implied_volatility, 'call')
             est_p2 = black_scholes(sim_price, k1, t2_y, risk_free_rate, implied_volatility, 'call')
             st.session_state.leg1_price = round(est_p1, 2)
             st.session_state.leg2_price = round(est_p2, 2)
@@ -760,39 +750,30 @@ with tab_strategy:
         report_data = {"Strategy": strategy, "Strike": k1, "Short Exp": str(t1_date), "Long Exp": str(t2_date), "Short Prem": p1, "Long Prem": p2}
             
     else:
-        # Vertical Spreads
-        # Determine Call or Put and Buy/Sell logic based on CSV
         is_call = "Call" in strategy
-        
-        # Default Logic Mapping based on CSV
-        # Bull Call: Buy Low (Expensive), Sell High (Cheap)
-        # Bear Call: Sell Low (Expensive), Buy High (Cheap)
-        # Bull Put: Sell High (Expensive), Buy Low (Cheap)
-        # Bear Put: Buy High (Expensive), Sell Low (Cheap)
-        
         if "Bull Call" in strategy:
             lbl1 = "Buy (Low Strike, Expensive)"
             lbl2 = "Sell (High Strike, Cheap)"
-            def_k1 = sim_price - 5 # ITM
-            def_k2 = sim_price + 5 # OTM
+            def_k1 = sim_price - 5 
+            def_k2 = sim_price + 5 
             is_debit = True
         elif "Bear Call" in strategy:
             lbl1 = "Sell (Low Strike, Expensive)"
             lbl2 = "Buy (High Strike, Cheap)"
-            def_k1 = sim_price - 5 # ITM
-            def_k2 = sim_price + 5 # OTM
+            def_k1 = sim_price - 5 
+            def_k2 = sim_price + 5 
             is_debit = False
         elif "Bull Put" in strategy:
             lbl1 = "Sell (High Strike, Expensive)"
             lbl2 = "Buy (Low Strike, Cheap)"
-            def_k1 = sim_price + 5 # ITM Put
-            def_k2 = sim_price - 5 # OTM Put
+            def_k1 = sim_price + 5 
+            def_k2 = sim_price - 5 
             is_debit = False
         elif "Bear Put" in strategy:
             lbl1 = "Buy (High Strike, Expensive)"
             lbl2 = "Sell (Low Strike, Cheap)"
-            def_k1 = sim_price + 5 # ITM Put
-            def_k2 = sim_price - 5 # OTM Put
+            def_k1 = sim_price + 5 
+            def_k2 = sim_price - 5 
             is_debit = True
         
         with c1:
@@ -803,11 +784,9 @@ with tab_strategy:
         with c2:
             st.markdown(f"### 🦵 Leg 2: {lbl2}")
             k2 = st.number_input("Strike 2 ($)", value=float(def_k2))
-            # FIXED: Added st. prefix here
             p2 = st.number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
 
         if st.button("🔮 Estimate Prices"):
-            # Simple assumption: 30 days out
             ty = 30 / 365.0
             o_type = 'call' if is_call else 'put'
             est_p1 = black_scholes(sim_price, k1, ty, risk_free_rate, implied_volatility, o_type)
@@ -821,68 +800,45 @@ with tab_strategy:
     
     # 4. Calculate P&L
     if st.button("🚀 Calculate Profit/Loss"):
-        # Range of prices to simulate (±20%)
         sim_prices = np.linspace(sim_price * 0.8, sim_price * 1.2, 50)
         pnl_data = []
         
-        # --- CALCULATION LOGIC ---
         if "Calendar" in strategy:
-            # Calendar Logic (Approximate)
-            # Net Debit: Buy (Leg 2) - Sell (Leg 1)
             cost = (p2 - p1) * 100 * sim_qty
-            
-            # Time diff for Long option when Short expires
             dt_near = (t1_date - date.today()).days / 365.0
             dt_far = (t2_date - date.today()).days / 365.0
             remaining_time = dt_far - dt_near
             
             for s in sim_prices:
-                # Value of Short at Expiry (Intrinsic)
-                # Assume Call Calendar
                 val_short = max(0, s - k1) 
-                
-                # Value of Long at Short Expiry (Black Scholes estimate)
                 val_long = black_scholes(s, k1, remaining_time, risk_free_rate, implied_volatility, 'call')
-                
                 spread_val_at_expiry = (val_long - val_short) * 100 * sim_qty
                 profit = spread_val_at_expiry - cost
                 pnl_data.append({"Price": s, "P&L": profit})
                 
         else:
-            # Vertical Logic
-            # P1 is Leg 1 Premium, P2 is Leg 2 Premium
-            # If Debit: Paid P1 - Received P2 (if Leg 1 is Buy) or Paid P1 (if both buy? No spread is Buy/Sell)
-            
-            # Simplified Net Calc based on Debit/Credit Flag
             if is_debit:
-                # Leg 1 is Buy, Leg 2 is Sell
                 net_cost = (p1 - p2) * 100 * sim_qty
             else:
-                # Leg 1 is Sell, Leg 2 is Buy
                 net_credit = (p1 - p2) * 100 * sim_qty 
                 
             for s in sim_prices:
-                # Calculate Intrinsic Values at Expiry
                 if "Bull Call" in strategy:
-                    # Buy Low (K1), Sell High (K2)
                     val_l = max(0, s - k1)
                     val_s = max(0, s - k2)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Put" in strategy:
-                    # Buy High (K1), Sell Low (K2) (Puts)
                     val_l = max(0, k1 - s)
                     val_s = max(0, k2 - s)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Call" in strategy:
-                    # Sell Low (K1), Buy High (K2) (Calls)
                     val_short = max(0, s - k1)
                     val_long = max(0, s - k2)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
                     profit = net_credit - loss_on_spread
                 elif "Bull Put" in strategy:
-                    # Sell High (K1), Buy Low (K2) (Puts)
                     val_short = max(0, k1 - s)
                     val_long = max(0, k2 - s)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
@@ -890,10 +846,7 @@ with tab_strategy:
                     
                 pnl_data.append({"Price": s, "P&L": profit})
 
-        # --- DISPLAY RESULTS ---
         df_pnl = pd.DataFrame(pnl_data)
-        
-        # Metrics
         max_p = df_pnl['P&L'].max()
         max_l = df_pnl['P&L'].min()
         
@@ -901,7 +854,6 @@ with tab_strategy:
         m1.metric("Max Profit", f"${max_p:,.2f}")
         m2.metric("Max Loss", f"${max_l:,.2f}")
         
-        # Chart
         c = alt.Chart(df_pnl).mark_area(
             line={'color':'white'},
             color=alt.Gradient(
@@ -917,16 +869,11 @@ with tab_strategy:
             tooltip=['Price', 'P&L']
         ).properties(height=400)
         
-        # Add a zero line
         rule = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color='white').encode(y='y')
-        
         st.altair_chart(c + rule, use_container_width=True)
         
-        # --- DOWNLOAD BUTTONS ---
         st.write("### 💾 Export Analysis")
         col_d1, col_d2 = st.columns(2)
-        
-        # 1. Download CSV (Excel)
         with col_d1:
             st.download_button(
                 label="📥 Download Data (Excel/CSV)",
@@ -934,8 +881,6 @@ with tab_strategy:
                 file_name=f"{strategy}_Analysis.csv",
                 mime="text/csv"
             )
-            
-        # 2. Download Report (Word/Doc)
         with col_d2:
             html_report = f"""
             <html>
@@ -963,7 +908,6 @@ with tab_strategy:
             </body>
             </html>
             """
-            
             st.download_button(
                 label="📥 Download Report (Word/Doc)",
                 data=html_report,
@@ -972,9 +916,9 @@ with tab_strategy:
             )
 
 # =========================================================
-#  TAB 7: LAMBDA ANALYSIS (NEW!)
+#  PAGE 7: LAMBDA ANALYSIS
 # =========================================================
-with tab_lambda:
+elif page == "⚡ Lambda Analysis":
     st.header("⚡ Lambda (Option Leverage) Analyzer")
     st.info("The Indicator for 'Winning Amount vs Premium' per option.")
     
@@ -985,7 +929,6 @@ with tab_lambda:
     $$\text{Lambda} = \frac{\text{Stock Price}}{\text{Option Price}} \times \text{Delta}$$
     """)
     
-    # Calculate Time to Expiry
     days_to_exp = (expiration_date - date.today()).days
     T_years = max(days_to_exp / 365.0, 0.0001)
     
@@ -1018,17 +961,14 @@ with tab_lambda:
     st.markdown("---")
     st.subheader("📈 Leverage Heatmap (Lambda vs Strike)")
     
-    # Generate Data for Plot
     strikes = np.linspace(current_stock_price * 0.7, current_stock_price * 1.3, 20)
     lambda_data = []
     
     for k in strikes:
-        # Call
         c_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
         c_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
         c_l = (current_stock_price / c_p * c_d) if c_p > 0.01 else 0
         
-        # Put
         p_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
         p_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
         p_l = (current_stock_price / p_p * p_d) if p_p > 0.01 else 0
@@ -1049,13 +989,12 @@ with tab_lambda:
     st.caption("Note: Out-of-the-money options (High strikes for Calls, Low for Puts) have higher leverage/Lambda, but lower probability of profit.")
 
 # =========================================================
-#  TAB 8: STRIKE COMPARISON (NEW!)
+#  PAGE 8: STRIKE COMPARISON
 # =========================================================
-with tab_compare:
+elif page == "📈 Strike Comparison":
     st.header("📈 Strike Price History Comparison")
     st.info("Compare the actual historical price action of up to 4 different strike prices.")
     
-    # 1. Inputs
     c_comp1, c_comp2, c_comp3 = st.columns(3)
     
     ticker_obj = yf.Ticker(symbol)
@@ -1071,7 +1010,6 @@ with tab_compare:
         with c_comp2:
             comp_type = st.radio("2. Option Type", ["Call", "Put"], horizontal=True, key="comp_type")
             
-        # Get Strikes for selected date/type
         chain = ticker_obj.option_chain(comp_exp)
         if comp_type == "Call":
             df_chain = chain.calls
@@ -1083,7 +1021,6 @@ with tab_compare:
         with c_comp3:
             selected_strikes = st.multiselect("3. Select Strikes (Max 4)", available_strikes, max_selections=4)
             
-        # 2. Fetch Data Button
         if st.button("📉 Compare Strike Histories"):
             if not selected_strikes:
                 st.warning("Please select at least one strike price.")
@@ -1091,23 +1028,16 @@ with tab_compare:
                 st.write(f"Fetching history for {len(selected_strikes)} contracts...")
                 progress_bar = st.progress(0)
                 
-                # Dictionary to hold dataframes
                 hist_data = {}
                 
                 for idx, strike in enumerate(selected_strikes):
-                    # Find contract symbol
                     contract_row = df_chain[df_chain['strike'] == strike]
                     if not contract_row.empty:
                         contract_symbol = contract_row.iloc[0]['contractSymbol']
-                        
-                        # Download history
                         try:
-                            # yfinance allows downloading option ticker directly if symbol is known
                             opt_hist = yf.download(contract_symbol, period="1mo", progress=False)
                             if not opt_hist.empty:
-                                # Normalize index to string for merging or just keep date
                                 opt_hist = opt_hist.reset_index()
-                                # Keep only Date and Close
                                 sub_df = opt_hist[['Date', 'Close']].copy()
                                 sub_df['Strike'] = f"${strike} {comp_type}"
                                 sub_df.rename(columns={'Close': 'Price'}, inplace=True)
@@ -1117,17 +1047,13 @@ with tab_compare:
                         except Exception as e:
                             st.warning(f"Error fetching {contract_symbol}: {e}")
                     
-                    # Rate limit pause
                     time.sleep(0.3)
                     progress_bar.progress((idx + 1) / len(selected_strikes))
                 
                 progress_bar.empty()
                 
-                # Combine Data
                 if hist_data:
                     combined_df = pd.concat(hist_data.values(), ignore_index=True)
-                    
-                    # Chart
                     chart = alt.Chart(combined_df).mark_line(point=True).encode(
                         x=alt.X('Date:T', title='Date'),
                         y=alt.Y('Price:Q', title='Option Price ($)'),
@@ -1137,11 +1063,9 @@ with tab_compare:
                     
                     st.altair_chart(chart, use_container_width=True)
                     
-                    # Show raw data
                     with st.expander("View Raw Price Data"):
                         st.dataframe(combined_df)
                 else:
                     st.error("No historical data could be retrieved for selected strikes.")
-                    
     except Exception as e:
         st.error(f"Error loading option chain: {e}")
