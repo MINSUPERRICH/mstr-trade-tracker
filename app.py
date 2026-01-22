@@ -145,10 +145,6 @@ def fetch_option_dates(symbol):
 
 @st.cache_data(ttl=3600)
 def fetch_option_chain_data(symbol, date):
-    """
-    Returns just the DataFrames (Calls, Puts) instead of the whole yfinance object.
-    This fixes the Serialization Error.
-    """
     time.sleep(0.5)
     tick = yf.Ticker(symbol)
     chain = tick.option_chain(date)
@@ -157,8 +153,41 @@ def fetch_option_chain_data(symbol, date):
 @st.cache_data(ttl=3600)
 def fetch_contract_history(contract_symbol):
     time.sleep(1.0)
-    # CHANGED: Now pulling 6 months of data
     return yf.download(contract_symbol, period="6mo", progress=False)
+
+@st.cache_data(ttl=3600)
+def get_ticker_info(symbol):
+    """
+    Fetches the current price and an estimated IV from the nearest expiration's ATM option.
+    Returns: (price, iv_percent)
+    """
+    try:
+        time.sleep(0.1) # Rate limit protection
+        t = yf.Ticker(symbol)
+        
+        # 1. Get Price
+        hist = t.history(period="1d")
+        if hist.empty: 
+            return 100.0, 50.0 # Fallback
+        price = hist['Close'].iloc[-1]
+        
+        # 2. Get IV
+        # Try to get from nearest expiration
+        opts = t.options
+        if not opts:
+            return price, 50.0
+            
+        chain = t.option_chain(opts[0]) # Nearest expiry
+        calls = chain.calls
+        
+        # Find ATM strike
+        calls['abs_diff'] = abs(calls['strike'] - price)
+        atm_row = calls.sort_values('abs_diff').iloc[0]
+        iv = atm_row['impliedVolatility'] * 100
+        
+        return price, iv
+    except:
+        return 100.0, 50.0
 
 # =========================================================
 #  APP LAYOUT
@@ -173,13 +202,39 @@ else:
     api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
 
 st.sidebar.markdown("---")
-symbol = st.sidebar.text_input("Symbol", value="MSTR").upper()
-current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=158.00, step=0.50)
+
+# --- DYNAMIC SYMBOL & IV LOGIC ---
+if "sb_symbol" not in st.session_state:
+    st.session_state.sb_symbol = "MSTR"
+    st.session_state.sb_price = 158.0
+    st.session_state.sb_iv = 95
+
+def on_symbol_change():
+    """Updates session state when symbol input changes"""
+    sym = st.session_state.symbol_input
+    p, i = get_ticker_info(sym)
+    st.session_state.sb_price = p
+    st.session_state.sb_iv = int(i)
+    st.session_state.sb_symbol = sym
+
+# Input for Symbol (Triggers update)
+symbol = st.sidebar.text_input("Symbol", value="MSTR", key="symbol_input", on_change=on_symbol_change).upper()
+
+# Input for Price (Auto-updated or Manual)
+current_stock_price = st.sidebar.number_input("Current Stock Price ($)", value=float(st.session_state.sb_price), step=0.50, key="price_input")
+
+# Input for Strike
 strike_price = st.sidebar.number_input("Strike Price ($)", value=157.50, step=0.50)
+
+# Input for Dates
 expiration_date = st.sidebar.date_input("Expiration Date", value=date(2026, 1, 9))
 purchase_date = st.sidebar.date_input("Purchase Date", value=date.today())
 entry_price = st.sidebar.number_input("Entry Price", value=8.55, step=0.10)
-implied_volatility = st.sidebar.slider("Implied Volatility (IV %)", 10, 200, 95) / 100.0
+
+# Input for IV (Auto-updated or Manual)
+implied_volatility_display = st.sidebar.slider("Implied Volatility (IV %)", 10, 400, st.session_state.sb_iv, key="iv_input")
+implied_volatility = implied_volatility_display / 100.0
+
 risk_free_rate = 0.045
 contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
@@ -298,7 +353,6 @@ if page == "⚔️ Strategy Battle":
             except Exception as e: st.error(str(e))
     if st.session_state["compare_ai_response"]:
         st.info(st.session_state["compare_ai_response"])
-        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
 
 # =========================================================
 #  PAGE 2: MARKET DASHBOARD
@@ -782,7 +836,14 @@ elif page == "🧮 Strategy Simulator":
             
     else:
         # Vertical Spreads
+        # Determine Call or Put and Buy/Sell logic based on CSV
         is_call = "Call" in strategy
+        
+        # Default Logic Mapping based on CSV
+        # Bull Call: Buy Low (Expensive), Sell High (Cheap)
+        # Bear Call: Sell Low (Expensive), Buy High (Cheap)
+        # Bull Put: Sell High (Expensive), Buy Low (Cheap)
+        # Bear Put: Buy High (Expensive), Sell Low (Cheap)
         
         if "Bull Call" in strategy:
             lbl1 = "Buy (Low Strike, Expensive)"
