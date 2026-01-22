@@ -146,7 +146,7 @@ def fetch_option_dates(symbol):
 @st.cache_data(ttl=3600)
 def fetch_option_chain_data(symbol, date):
     """
-    FIX: Returns just the DataFrames (Calls, Puts) instead of the whole yfinance object.
+    Returns just the DataFrames (Calls, Puts) instead of the whole yfinance object.
     This fixes the Serialization Error.
     """
     time.sleep(0.5)
@@ -157,7 +157,8 @@ def fetch_option_chain_data(symbol, date):
 @st.cache_data(ttl=3600)
 def fetch_contract_history(contract_symbol):
     time.sleep(1.0)
-    return yf.download(contract_symbol, period="1mo", progress=False)
+    # CHANGED: Now pulling 6 months of data
+    return yf.download(contract_symbol, period="6mo", progress=False)
 
 # =========================================================
 #  APP LAYOUT
@@ -297,6 +298,7 @@ if page == "⚔️ Strategy Battle":
             except Exception as e: st.error(str(e))
     if st.session_state["compare_ai_response"]:
         st.info(st.session_state["compare_ai_response"])
+        st.download_button("📥 Download Explanation", st.session_state["compare_ai_response"], "Battle_QA.txt")
 
 # =========================================================
 #  PAGE 2: MARKET DASHBOARD
@@ -780,14 +782,7 @@ elif page == "🧮 Strategy Simulator":
             
     else:
         # Vertical Spreads
-        # Determine Call or Put and Buy/Sell logic based on CSV
         is_call = "Call" in strategy
-        
-        # Default Logic Mapping based on CSV
-        # Bull Call: Buy Low (Expensive), Sell High (Cheap)
-        # Bear Call: Sell Low (Expensive), Buy High (Cheap)
-        # Bull Put: Sell High (Expensive), Buy Low (Cheap)
-        # Bear Put: Buy High (Expensive), Sell Low (Cheap)
         
         if "Bull Call" in strategy:
             lbl1 = "Buy (Low Strike, Expensive)"
@@ -1003,6 +998,7 @@ elif page == "⚡ Lambda Analysis":
     $$\text{Lambda} = \frac{\text{Stock Price}}{\text{Option Price}} \times \text{Delta}$$
     """)
     
+    # Calculate Time to Expiry
     days_to_exp = (expiration_date - date.today()).days
     T_years = max(days_to_exp / 365.0, 0.0001)
     
@@ -1035,14 +1031,17 @@ elif page == "⚡ Lambda Analysis":
     st.markdown("---")
     st.subheader("📈 Leverage Heatmap (Lambda vs Strike)")
     
+    # Generate Data for Plot
     strikes = np.linspace(current_stock_price * 0.7, current_stock_price * 1.3, 20)
     lambda_data = []
     
     for k in strikes:
+        # Call
         c_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
         c_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'call')
         c_l = (current_stock_price / c_p * c_d) if c_p > 0.01 else 0
         
+        # Put
         p_p = black_scholes(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
         p_d = calculate_delta(current_stock_price, k, T_years, risk_free_rate, implied_volatility, 'put')
         p_l = (current_stock_price / p_p * p_d) if p_p > 0.01 else 0
@@ -1072,6 +1071,7 @@ elif page == "📈 Strike Comparison":
     c_comp1, c_comp2, c_comp3 = st.columns(3)
     
     try:
+        # Use cached function
         all_dates = fetch_option_dates(symbol)
         
         if not all_dates:
@@ -1084,6 +1084,7 @@ elif page == "📈 Strike Comparison":
         with c_comp2:
             comp_type = st.radio("2. Option Type", ["Call", "Put"], horizontal=True, key="comp_type")
             
+        # Use cached function
         calls, puts = fetch_option_chain_data(symbol, comp_exp)
         if comp_type == "Call":
             df_chain = calls
@@ -1109,7 +1110,7 @@ elif page == "📈 Strike Comparison":
                     if not contract_row.empty:
                         contract_symbol = contract_row.iloc[0]['contractSymbol']
                         try:
-                            # Use cached function for history
+                            # Use cached function for history (6 months)
                             opt_hist = fetch_contract_history(contract_symbol)
                             
                             if not opt_hist.empty:
