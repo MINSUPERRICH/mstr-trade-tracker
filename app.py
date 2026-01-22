@@ -139,20 +139,25 @@ def calculate_dss_data(ticker, period=10, ema_period=9):
 
 @st.cache_data(ttl=3600)
 def fetch_option_dates(symbol):
-    time.sleep(0.5) # Rate limit protection
+    time.sleep(0.5) 
     tick = yf.Ticker(symbol)
     return tick.options
 
 @st.cache_data(ttl=3600)
-def fetch_option_chain(symbol, date):
+def fetch_option_chain_data(symbol, date):
+    """
+    FIX: Returns just the DataFrames (Calls, Puts) instead of the whole yfinance object.
+    This fixes the Serialization Error.
+    """
     time.sleep(0.5)
     tick = yf.Ticker(symbol)
-    return tick.option_chain(date)
+    chain = tick.option_chain(date)
+    return chain.calls, chain.puts
 
 @st.cache_data(ttl=3600)
-def fetch_contract_history(symbol):
-    time.sleep(1.0) # Stronger rate limit for history
-    return yf.download(symbol, period="1mo", progress=False)
+def fetch_contract_history(contract_symbol):
+    time.sleep(1.0)
+    return yf.download(contract_symbol, period="1mo", progress=False)
 
 # =========================================================
 #  APP LAYOUT
@@ -356,9 +361,7 @@ elif page == "📊 Market Dashboard":
             
             if st.button("📊 Calculate PCR"):
                 with st.spinner("Fetching Option Chain..."):
-                    chain = fetch_option_chain(symbol, pcr_date)
-                    calls = chain.calls
-                    puts = chain.puts
+                    calls, puts = fetch_option_chain_data(symbol, pcr_date)
                     
                     c_vol = calls['volume'].sum() if not calls.empty else 0
                     p_vol = puts['volume'].sum() if not puts.empty else 0
@@ -386,8 +389,7 @@ elif page == "📊 Market Dashboard":
                         st.success("🟢 High Call Volume detected relative to Puts. Sentiment appears Bullish.")
                     else:
                         st.info("ℹ️ Put/Call Ratio is neutral (0.7 - 1.0).")
-    except Exception as e:
-        st.warning(f"Could not fetch dates for PCR. API Limit may be hit. {e}")
+    except: pass
 
     # --- HIGH VELOCITY SCANNER ---
     st.markdown("---")
@@ -402,11 +404,15 @@ elif page == "📊 Market Dashboard":
                 target_date = avail_dates[0]
                 st.info(f"📅 Analyzing Expiry: **{target_date}**")
                 
-                chain = fetch_option_chain(symbol, target_date)
-                calls = chain.calls.copy()
+                calls, puts = fetch_option_chain_data(symbol, target_date)
+                
+                # We need dataframes from tuple
+                calls = calls.copy()
                 calls['Type'] = 'Call'
-                puts = chain.puts.copy()
+                
+                puts = puts.copy()
                 puts['Type'] = 'Put'
+                
                 df = pd.concat([calls, puts], ignore_index=True)
                 
                 # Fetch history for current price with cache
@@ -471,10 +477,7 @@ elif page == "📊 Market Dashboard":
                     mime="text/csv"
                 )
         except Exception as e:
-            if "Too Many Requests" in str(e) or "429" in str(e):
-                st.error("⚠️ Yahoo Finance Rate Limit Hit. Please wait 1 minute before scanning again.")
-            else:
-                st.error(f"Scanner Error: {e}")
+            st.error(f"Scanner Error: {e}")
 
 # =========================================================
 #  PAGE 3: AI ANALYST
@@ -777,7 +780,14 @@ elif page == "🧮 Strategy Simulator":
             
     else:
         # Vertical Spreads
+        # Determine Call or Put and Buy/Sell logic based on CSV
         is_call = "Call" in strategy
+        
+        # Default Logic Mapping based on CSV
+        # Bull Call: Buy Low (Expensive), Sell High (Cheap)
+        # Bear Call: Sell Low (Expensive), Buy High (Cheap)
+        # Bull Put: Sell High (Expensive), Buy Low (Cheap)
+        # Bear Put: Buy High (Expensive), Sell Low (Cheap)
         
         if "Bull Call" in strategy:
             lbl1 = "Buy (Low Strike, Expensive)"
@@ -829,45 +839,68 @@ elif page == "🧮 Strategy Simulator":
     
     # 4. Calculate P&L
     if st.button("🚀 Calculate Profit/Loss"):
+        # Range of prices to simulate (±20%)
         sim_prices = np.linspace(sim_price * 0.8, sim_price * 1.2, 50)
         pnl_data = []
         
+        # --- CALCULATION LOGIC ---
         if "Calendar" in strategy:
+            # Calendar Logic (Approximate)
+            # Net Debit: Buy (Leg 2) - Sell (Leg 1)
             cost = (p2 - p1) * 100 * sim_qty
+            
+            # Time diff for Long option when Short expires
             dt_near = (t1_date - date.today()).days / 365.0
             dt_far = (t2_date - date.today()).days / 365.0
             remaining_time = dt_far - dt_near
             
             for s in sim_prices:
+                # Value of Short at Expiry (Intrinsic)
+                # Assume Call Calendar
                 val_short = max(0, s - k1) 
+                
+                # Value of Long at Short Expiry (Black Scholes estimate)
                 val_long = black_scholes(s, k1, remaining_time, risk_free_rate, implied_volatility, 'call')
+                
                 spread_val_at_expiry = (val_long - val_short) * 100 * sim_qty
                 profit = spread_val_at_expiry - cost
                 pnl_data.append({"Price": s, "P&L": profit})
                 
         else:
+            # Vertical Logic
+            # P1 is Leg 1 Premium, P2 is Leg 2 Premium
+            # If Debit: Paid P1 - Received P2 (if Leg 1 is Buy) or Paid P1 (if both buy? No spread is Buy/Sell)
+            
+            # Simplified Net Calc based on Debit/Credit Flag
             if is_debit:
+                # Leg 1 is Buy, Leg 2 is Sell
                 net_cost = (p1 - p2) * 100 * sim_qty
             else:
+                # Leg 1 is Sell, Leg 2 is Buy
                 net_credit = (p1 - p2) * 100 * sim_qty 
                 
             for s in sim_prices:
+                # Calculate Intrinsic Values at Expiry
                 if "Bull Call" in strategy:
+                    # Buy Low (K1), Sell High (K2)
                     val_l = max(0, s - k1)
                     val_s = max(0, s - k2)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Put" in strategy:
+                    # Buy High (K1), Sell Low (K2) (Puts)
                     val_l = max(0, k1 - s)
                     val_s = max(0, k2 - s)
                     payoff = (val_l - val_s) * 100 * sim_qty
                     profit = payoff - net_cost
                 elif "Bear Call" in strategy:
+                    # Sell Low (K1), Buy High (K2) (Calls)
                     val_short = max(0, s - k1)
                     val_long = max(0, s - k2)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
                     profit = net_credit - loss_on_spread
                 elif "Bull Put" in strategy:
+                    # Sell High (K1), Buy Low (K2) (Puts)
                     val_short = max(0, k1 - s)
                     val_long = max(0, k2 - s)
                     loss_on_spread = (val_short - val_long) * 100 * sim_qty
@@ -875,7 +908,10 @@ elif page == "🧮 Strategy Simulator":
                     
                 pnl_data.append({"Price": s, "P&L": profit})
 
+        # --- DISPLAY RESULTS ---
         df_pnl = pd.DataFrame(pnl_data)
+        
+        # Metrics
         max_p = df_pnl['P&L'].max()
         max_l = df_pnl['P&L'].min()
         
@@ -883,6 +919,7 @@ elif page == "🧮 Strategy Simulator":
         m1.metric("Max Profit", f"${max_p:,.2f}")
         m2.metric("Max Loss", f"${max_l:,.2f}")
         
+        # Chart
         c = alt.Chart(df_pnl).mark_area(
             line={'color':'white'},
             color=alt.Gradient(
@@ -898,11 +935,16 @@ elif page == "🧮 Strategy Simulator":
             tooltip=['Price', 'P&L']
         ).properties(height=400)
         
+        # Add a zero line
         rule = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color='white').encode(y='y')
+        
         st.altair_chart(c + rule, use_container_width=True)
         
+        # --- DOWNLOAD BUTTONS ---
         st.write("### 💾 Export Analysis")
         col_d1, col_d2 = st.columns(2)
+        
+        # 1. Download CSV (Excel)
         with col_d1:
             st.download_button(
                 label="📥 Download Data (Excel/CSV)",
@@ -910,6 +952,8 @@ elif page == "🧮 Strategy Simulator":
                 file_name=f"{strategy}_Analysis.csv",
                 mime="text/csv"
             )
+            
+        # 2. Download Report (Word/Doc)
         with col_d2:
             html_report = f"""
             <html>
@@ -937,6 +981,7 @@ elif page == "🧮 Strategy Simulator":
             </body>
             </html>
             """
+            
             st.download_button(
                 label="📥 Download Report (Word/Doc)",
                 data=html_report,
@@ -1027,7 +1072,6 @@ elif page == "📈 Strike Comparison":
     c_comp1, c_comp2, c_comp3 = st.columns(3)
     
     try:
-        # Use cached function
         all_dates = fetch_option_dates(symbol)
         
         if not all_dates:
@@ -1040,12 +1084,11 @@ elif page == "📈 Strike Comparison":
         with c_comp2:
             comp_type = st.radio("2. Option Type", ["Call", "Put"], horizontal=True, key="comp_type")
             
-        # Use cached function
-        chain = fetch_option_chain(symbol, comp_exp)
+        calls, puts = fetch_option_chain_data(symbol, comp_exp)
         if comp_type == "Call":
-            df_chain = chain.calls
+            df_chain = calls
         else:
-            df_chain = chain.puts
+            df_chain = puts
             
         available_strikes = sorted(df_chain['strike'].tolist())
         
