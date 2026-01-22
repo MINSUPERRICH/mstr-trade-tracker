@@ -159,14 +159,15 @@ risk_free_rate = 0.045
 contracts = st.sidebar.number_input("Contracts", value=1, step=1)
 
 # --- TABS ---
-tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy, tab_lambda = st.tabs([
+tab_math, tab_dashboard, tab_ai, tab_catalyst, tab_ocr, tab_strategy, tab_lambda, tab_compare = st.tabs([
     "⚔️ Strategy Battle", 
     "📊 Market Dashboard", 
     "📸 Chart Analyst", 
     "📅 Catalyst & Checklist",
     "📸 Option Chain Visualizer",
     "🧮 Strategy Simulator",
-    "⚡ Lambda Analysis"
+    "⚡ Lambda Analysis",
+    "📈 Strike Comparison"
 ])
 
 # =========================================================
@@ -802,7 +803,7 @@ with tab_strategy:
         with c2:
             st.markdown(f"### 🦵 Leg 2: {lbl2}")
             k2 = st.number_input("Strike 2 ($)", value=float(def_k2))
-            p2 = st.number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
+            p2 = number_input("Premium ($)", value=st.session_state.leg2_price, key="p2_v")
 
         if st.button("🔮 Estimate Prices"):
             # Simple assumption: 30 days out
@@ -1045,3 +1046,101 @@ with tab_lambda:
     
     st.altair_chart(c_lam, use_container_width=True)
     st.caption("Note: Out-of-the-money options (High strikes for Calls, Low for Puts) have higher leverage/Lambda, but lower probability of profit.")
+
+# =========================================================
+#  TAB 8: STRIKE COMPARISON (NEW!)
+# =========================================================
+with tab_compare:
+    st.header("📈 Strike Price History Comparison")
+    st.info("Compare the actual historical price action of up to 4 different strike prices.")
+    
+    # 1. Inputs
+    c_comp1, c_comp2, c_comp3 = st.columns(3)
+    
+    ticker_obj = yf.Ticker(symbol)
+    try:
+        all_dates = ticker_obj.options
+        if not all_dates:
+            st.error("No option dates found for this symbol.")
+            st.stop()
+            
+        with c_comp1:
+            comp_exp = st.selectbox("1. Expiration Date", all_dates, index=0, key="comp_exp")
+            
+        with c_comp2:
+            comp_type = st.radio("2. Option Type", ["Call", "Put"], horizontal=True, key="comp_type")
+            
+        # Get Strikes for selected date/type
+        chain = ticker_obj.option_chain(comp_exp)
+        if comp_type == "Call":
+            df_chain = chain.calls
+        else:
+            df_chain = chain.puts
+            
+        available_strikes = sorted(df_chain['strike'].tolist())
+        
+        with c_comp3:
+            selected_strikes = st.multiselect("3. Select Strikes (Max 4)", available_strikes, max_selections=4)
+            
+        # 2. Fetch Data Button
+        if st.button("📉 Compare Strike Histories"):
+            if not selected_strikes:
+                st.warning("Please select at least one strike price.")
+            else:
+                st.write(f"Fetching history for {len(selected_strikes)} contracts...")
+                progress_bar = st.progress(0)
+                
+                # Dictionary to hold dataframes
+                hist_data = {}
+                
+                for idx, strike in enumerate(selected_strikes):
+                    # Find contract symbol
+                    contract_row = df_chain[df_chain['strike'] == strike]
+                    if not contract_row.empty:
+                        contract_symbol = contract_row.iloc[0]['contractSymbol']
+                        
+                        # Download history
+                        try:
+                            # yfinance allows downloading option ticker directly if symbol is known
+                            opt_hist = yf.download(contract_symbol, period="1mo", progress=False)
+                            if not opt_hist.empty:
+                                # Normalize index to string for merging or just keep date
+                                opt_hist = opt_hist.reset_index()
+                                # Keep only Date and Close
+                                sub_df = opt_hist[['Date', 'Close']].copy()
+                                sub_df['Strike'] = f"${strike} {comp_type}"
+                                sub_df.rename(columns={'Close': 'Price'}, inplace=True)
+                                hist_data[strike] = sub_df
+                            else:
+                                st.warning(f"No volume/history found for {contract_symbol}")
+                        except Exception as e:
+                            st.warning(f"Error fetching {contract_symbol}: {e}")
+                    
+                    # Rate limit pause
+                    time.sleep(0.3)
+                    progress_bar.progress((idx + 1) / len(selected_strikes))
+                
+                progress_bar.empty()
+                
+                # Combine Data
+                if hist_data:
+                    combined_df = pd.concat(hist_data.values(), ignore_index=True)
+                    
+                    # Chart
+                    chart = alt.Chart(combined_df).mark_line(point=True).encode(
+                        x=alt.X('Date:T', title='Date'),
+                        y=alt.Y('Price:Q', title='Option Price ($)'),
+                        color=alt.Color('Strike:N', title='Contract'),
+                        tooltip=['Date', 'Strike', 'Price']
+                    ).properties(height=500).interactive()
+                    
+                    st.altair_chart(chart, use_container_width=True)
+                    
+                    # Show raw data
+                    with st.expander("View Raw Price Data"):
+                        st.dataframe(combined_df)
+                else:
+                    st.error("No historical data could be retrieved for selected strikes.")
+                    
+    except Exception as e:
+        st.error(f"Error loading option chain: {e}")
